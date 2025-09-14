@@ -1,3 +1,17 @@
+langgraph>=0.3.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+fastapi>=0.115.7
+uvicorn[standard]>=0.30.0
+fastmcp>=1.12.4
+mcp>=1.0.0
+duckdb>=1.0.0
+httpx>=0.27.0
+aiohttp>=3.9.0
+pydantic>=2.8.0
+typing-extensions>=4.12.0
+kubernetes>=30.1.0
+structlog>=24.0.0
 asyncio>=3.4.1
 fastapi>=0.115.7
 fastmcp>=1.12.4
@@ -12,6 +26,9 @@ aiohttp>=3.8.0
 uvicorn>=0.20.0
 python-dateutil>=2.8.0
 pytz>=2023.3
+langchain-openai
+httpx
+tabulate
 
 [dev]
 pytest>=7.0.0

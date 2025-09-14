@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenShift OVN-K Benchmark MCP - AI Chat Interface</title>
+    <title>OpenShift ETCD Analyzer MCP - AI Chat Interface</title>
     <style>
         * {
             margin: 0;
@@ -510,50 +510,53 @@
     <div class="container">
         <div class="sidebar">
             <div class="sidebar-header">
-                <h1>OCP OVN-K Benchmark</h1>
+                <h1>OCP ETCD Analyzer</h1>
                 <p>AI-Powered Performance Analysis</p>
             </div>
 
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
-                <button class="action-button" onclick="sendQuickMessage('Tell me the current cluster information?')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Tell me the current cluster information and cluster status and analysis/summary readable')">
                     🏛️ Cluster Overview
                 </button>
+                <!-- <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd cluster status and analysis/summary readable')">
+                    🔍 Etcd Cluster Status
+                </button> -->
                 <button class="action-button"
-                    onclick="sendQuickMessage('Perform comprehensive general cluster status check and health assessment')">
-                    🔍 Cluster Status Check
+                    onclick="sendQuickMessage('Show me etcd General Information and analysis/summary readable')">
+                    🖥️ Etcd General Info
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Show me current cluster node usage')">
-                    🖥️ Etcd Cluster Status
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    🌐 Etcd Disk IO
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVS performance metrics')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd network IO usage and analysis/summary readable')">
                     🌐 Etcd Network IO
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze Multus CNI performance')">
-                    🌐 Etcd General Info
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd disk IO usage and analysis/summary readable')">
+                    🌐 Etcd Disk IO
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd wal fsync  and analysis/summary readable')">
                     🌐 Etcd Wal Fsync
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd backend commit usage  and analysis/summary readable')">
                     🌐 Etcd Backend Commit
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd compact and defrag usage  and analysis/summary readable')">
                     🌐 Etcd Compact Defrag
                 </button>
-                <button class="action-button"
-                    onclick="sendQuickMessage('Check and Analyze API server performance metrics')">
+                <!-- <button class="action-button" onclick="sendQuickMessage('Check and Analyze etcd performance metrics')">
                     ⚡ ETCD Performance
-                </button>
+                </button> -->
                 <button class="action-button"
-                    onclick="sendQuickMessage('Show me OVN-K components deep drive analysis')">
+                    onclick="sendQuickMessage('Show me etcd deep drive analysis and analysis/summary readable')">
                     🔀 ETCD Deep Dive
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Run overall OCP Cluster Performane analysis, include API perormance')">
+                    onclick="sendQuickMessage('Run overall ETCD Cluster Performane analysis')">
                     📈 Full Performance Report
                 </button>
             </div>
@@ -582,7 +585,7 @@
             <div class="chat-container">
                 <div class="messages" id="messages">
                     <div class="welcome-message">
-                        <h3>Welcome to OpenShift OVN-K Benchmark AI Assistant</h3>
+                        <h3>Welcome to OpenShift ETCD Analyzer AI Assistant</h3>
                         <p>I can help you analyze your OpenShift cluster performance, check system health,
                             and provide insights about your infrastructure using advanced AI and comprehensive
                             monitoring tools.</p>
@@ -630,6 +633,19 @@
 
     <script>
         // Global application state
+        function decodeUnicodeEscapes(text) {
+            try {
+                if (!text || typeof text !== 'string') return text;
+                // Convert \uXXXX to actual characters (handles sequences like \u2705\u2022)
+                text = text.replace(/\\u([0-9a-fA-F]{4})/g, (m, g1) => {
+                    try { return String.fromCharCode(parseInt(g1, 16)); } catch { return m; }
+                });
+                return text;
+            } catch (e) {
+                return text;
+            }
+        }
+
         class ChatApplication {
             constructor() {
                 this.conversationId = 'web-' + Math.random().toString(36).substr(2, 9);
@@ -786,6 +802,7 @@
 
                                         // Convert markdown-style formatting to HTML
                                         let content = data.content;
+                                        content = decodeUnicodeEscapes(content);
                                         content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
                                         content = content.replace(/\*(.*?)\*/g, '<em>$1</em>');
                                         content = content.replace(/\n/g, '<br>');
@@ -841,10 +858,11 @@
             }
 
             displayTable(tableHtml, metadata) {
+                const decodedHtml = decodeUnicodeEscapes(tableHtml);
                 this.tablesDiv.innerHTML += `
                     <div class="table-wrapper">
                         <h4>${metadata?.title || 'Data Table'}</h4>
-                        ${tableHtml}
+                        ${decodedHtml}
                     </div>
                 `;
                 this.tablesContainer.style.display = 'block';
@@ -917,7 +935,7 @@
 
             async checkClusterHealth(showLoading = true) {
                 try {
-                    const clusterResponse = await fetch('/api/cluster/health', {
+                    const clusterResponse = await fetch('/api/etcd/health', {
                         method: 'GET',
                         headers: {
                             'Accept': 'application/json',
@@ -939,20 +957,26 @@
                     const clusterHealth = await clusterResponse.json();
                     console.log('Cluster health response:', clusterHealth);
 
-                    // Look for cluster health in the details object
+                    // Parse the response based on the actual structure
+                    const overallStatus = clusterHealth.status || 'unknown';
                     const healthDetails = clusterHealth.details || {};
-                    const overallStatus = healthDetails.overall_cluster_health ||
-                        healthDetails.health_details?.overall_cluster_health ||
-                        'unknown';
+                    const detailsStatus = healthDetails.overall_health || healthDetails.status || 'unknown';
+                    const collectorsInitialized = healthDetails.collectors_initialized || false;
+                    const toolsAvailable = healthDetails.tools_available || 0;
 
-                    console.log('Overall status:', overallStatus);
+                    console.log('Overall status:', overallStatus, 'Details status:', detailsStatus);
 
-                    if (overallStatus === 'healthy') {
-                        this.updateClusterStatus('connected', `Cluster ${overallStatus.charAt(0).toUpperCase()}${overallStatus.slice(1).toLowerCase()}`);
-                    } else if (overallStatus === 'unknown') {
+                    // Use the most specific status available
+                    const finalStatus = detailsStatus !== 'unknown' ? detailsStatus : overallStatus;
+
+                    if (finalStatus === 'healthy' && collectorsInitialized) {
+                        this.updateClusterStatus('connected', `Cluster Healthy (${toolsAvailable} tools)`);
+                    } else if (finalStatus === 'healthy') {
+                        this.updateClusterStatus('connected', 'Cluster Healthy');
+                    } else if (finalStatus === 'unknown') {
                         this.updateClusterStatus('checking', 'Cluster Status Unknown');
                     } else {
-                        this.updateClusterStatus('disconnected', 'Cluster Issues Detected');
+                        this.updateClusterStatus('disconnected', `Cluster ${finalStatus}`);
                     }
                 } catch (e) {
                     console.error('Cluster health check failed:', e);

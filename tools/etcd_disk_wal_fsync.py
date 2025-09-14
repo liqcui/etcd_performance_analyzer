@@ -55,26 +55,13 @@ class DiskWALFsyncCollector:
                     'metrics': {}
                 }
                 
-                # Process each metric
+                # Process each metric dynamically from config
                 for metric_config in self.wal_fsync_metrics:
                     metric_name = metric_config['name']
                     self.logger.info(f"Collecting metric: {metric_name}")
                     
                     try:
-                        if metric_name == "disk_wal_fsync_seconds_duration_p99":
-                            metric_result = await self.get_wal_fsync_p99_duration(prom)
-                        elif metric_name == "wal_fsync_duration_seconds_sum_rate":
-                            metric_result = await self.get_wal_fsync_duration_sum_rate(prom)
-                        elif metric_name == "wal_fsync_duration_sum":
-                            metric_result = await self.get_wal_fsync_duration_sum(prom)
-                        elif metric_name == "wal_fsync_duration_seconds_count_rate":
-                            metric_result = await self.get_wal_fsync_duration_count_rate(prom)
-                        elif metric_name == "wal_fsync_duration_seconds_count":
-                            metric_result = await self.get_wal_fsync_duration_count(prom)
-                        else:
-                            self.logger.warning(f"Unknown metric: {metric_name}")
-                            continue
-                        
+                        metric_result = await self._collect_generic_metric(prom, metric_config)
                         results['metrics'][metric_name] = metric_result
                         
                     except Exception as e:
@@ -104,13 +91,10 @@ class DiskWALFsyncCollector:
                 'timestamp': datetime.now(pytz.UTC).isoformat()
             }
     
-    async def get_wal_fsync_p99_duration(self, prom: PrometheusBaseQuery) -> Dict[str, Any]:
-        """Get WAL fsync 99th percentile duration metrics"""
-        metric_config = self.config.get_metric_by_name("disk_wal_fsync_seconds_duration_p99")
-        if not metric_config:
-            return {'status': 'error', 'error': 'Metric configuration not found'}
-        
+    async def _collect_generic_metric(self, prom: PrometheusBaseQuery, metric_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Generic method to collect any WAL fsync metric"""
         query = metric_config['expr']
+        metric_name = metric_config['name']
         
         try:
             result = await prom.query_with_stats(query, self.duration)
@@ -125,23 +109,72 @@ class DiskWALFsyncCollector:
                 
                 if pod_name != 'unknown':
                     stats = series['statistics']
-                    pod_stats[pod_name] = {
-                        'avg_seconds': round(stats.get('avg', 0), 6),
-                        'max_seconds': round(stats.get('max', 0), 6),
-                        'min_seconds': round(stats.get('min', 0), 6),
-                        'latest_seconds': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
-                        'data_points': stats.get('count', 0)
-                    }
+                    
+                    # Format based on metric type
+                    if 'duration' in metric_name and 'rate' in metric_name:
+                        # Duration rate metrics
+                        pod_stats[pod_name] = {
+                            'avg_rate_seconds': round(stats.get('avg', 0), 6),
+                            'max_rate_seconds': round(stats.get('max', 0), 6),
+                            'min_rate_seconds': round(stats.get('min', 0), 6),
+                            'latest_rate_seconds': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
+                            'data_points': stats.get('count', 0)
+                        }
+                    elif 'duration' in metric_name and 'sum' in metric_name and 'rate' not in metric_name:
+                        # Duration sum metrics
+                        pod_stats[pod_name] = {
+                            'avg_sum_seconds': round(stats.get('avg', 0), 6),
+                            'max_sum_seconds': round(stats.get('max', 0), 6),
+                            'min_sum_seconds': round(stats.get('min', 0), 6),
+                            'latest_sum_seconds': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
+                            'data_points': stats.get('count', 0)
+                        }
+                    elif 'count' in metric_name and 'rate' in metric_name:
+                        # Count rate metrics
+                        pod_stats[pod_name] = {
+                            'avg_ops_per_sec': round(stats.get('avg', 0), 3),
+                            'max_ops_per_sec': round(stats.get('max', 0), 3),
+                            'min_ops_per_sec': round(stats.get('min', 0), 3),
+                            'latest_ops_per_sec': round(stats.get('latest', 0), 3) if stats.get('latest') is not None else None,
+                            'data_points': stats.get('count', 0)
+                        }
+                    elif 'count' in metric_name:
+                        # Count metrics
+                        pod_stats[pod_name] = {
+                            'avg_count': round(stats.get('avg', 0), 0),
+                            'max_count': round(stats.get('max', 0), 0),
+                            'min_count': round(stats.get('min', 0), 0),
+                            'latest_count': round(stats.get('latest', 0), 0) if stats.get('latest') is not None else None,
+                            'data_points': stats.get('count', 0)
+                        }
+                    elif 'p99' in metric_name or 'percentile' in metric_name.lower():
+                        # Percentile metrics
+                        pod_stats[pod_name] = {
+                            'avg_seconds': round(stats.get('avg', 0), 6),
+                            'max_seconds': round(stats.get('max', 0), 6),
+                            'min_seconds': round(stats.get('min', 0), 6),
+                            'latest_seconds': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
+                            'data_points': stats.get('count', 0)
+                        }
+                    else:
+                        # Default format for unknown metric types
+                        pod_stats[pod_name] = {
+                            'avg_value': round(stats.get('avg', 0), 6),
+                            'max_value': round(stats.get('max', 0), 6),
+                            'min_value': round(stats.get('min', 0), 6),
+                            'latest_value': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
+                            'data_points': stats.get('count', 0)
+                        }
             
             # Get node mapping for pods
             node_mapping = await self.utility.get_pod_to_node_mapping()
             
             return {
                 'status': 'success',
-                'metric': 'disk_wal_fsync_seconds_duration_p99',
-                'title': metric_config.get('title', 'Disk WAL Sync Duration'),
-                'unit': 'seconds',
-                'description': '99th percentile WAL fsync duration per etcd pod',
+                'metric': metric_name,
+                'title': metric_config.get('title', metric_name.replace('_', ' ').title()),
+                'unit': metric_config.get('unit', 'unknown'),
+                'description': self._get_metric_description(metric_name),
                 'pod_metrics': pod_stats,
                 'node_mapping': {pod: node_mapping.get(pod, 'unknown') for pod in pod_stats.keys()},
                 'total_pods': len(pod_stats),
@@ -149,200 +182,19 @@ class DiskWALFsyncCollector:
             }
             
         except Exception as e:
-            self.logger.error(f"Error getting WAL fsync p99 duration: {e}")
+            self.logger.error(f"Error collecting metric {metric_name}: {e}")
             return {'status': 'error', 'error': str(e)}
     
-    async def get_wal_fsync_duration_sum_rate(self, prom: PrometheusBaseQuery) -> Dict[str, Any]:
-        """Get WAL fsync duration sum rate metrics"""
-        metric_config = self.config.get_metric_by_name("wal_fsync_duration_seconds_sum_rate")
-        if not metric_config:
-            return {'status': 'error', 'error': 'Metric configuration not found'}
-        
-        query = metric_config['expr']
-        
-        try:
-            result = await prom.query_with_stats(query, self.duration)
-            
-            if result['status'] != 'success':
-                return {'status': 'error', 'error': result.get('error')}
-            
-            # Process results by pod
-            pod_stats = {}
-            for series in result.get('series_data', []):
-                pod_name = series['labels'].get('pod', 'unknown')
-                
-                if pod_name != 'unknown':
-                    stats = series['statistics']
-                    pod_stats[pod_name] = {
-                        'avg_rate_seconds': round(stats.get('avg', 0), 6),
-                        'max_rate_seconds': round(stats.get('max', 0), 6),
-                        'min_rate_seconds': round(stats.get('min', 0), 6),
-                        'latest_rate_seconds': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
-                        'data_points': stats.get('count', 0)
-                    }
-            
-            # Get node mapping for pods
-            node_mapping = await self.utility.get_pod_to_node_mapping()
-            
-            return {
-                'status': 'success',
-                'metric': 'wal_fsync_duration_seconds_sum_rate',
-                'title': metric_config.get('title', 'WAL fsync Duration sum - rate'),
-                'unit': 'seconds/sec',
-                'description': 'Rate of WAL fsync duration sum per etcd pod',
-                'pod_metrics': pod_stats,
-                'node_mapping': {pod: node_mapping.get(pod, 'unknown') for pod in pod_stats.keys()},
-                'total_pods': len(pod_stats),
-                'overall_stats': result.get('overall_statistics', {})
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error getting WAL fsync duration sum rate: {e}")
-            return {'status': 'error', 'error': str(e)}
-    
-    async def get_wal_fsync_duration_sum(self, prom: PrometheusBaseQuery) -> Dict[str, Any]:
-        """Get WAL fsync duration sum metrics"""
-        metric_config = self.config.get_metric_by_name("wal_fsync_duration_sum")
-        if not metric_config:
-            return {'status': 'error', 'error': 'Metric configuration not found'}
-        
-        query = metric_config['expr']
-        
-        try:
-            result = await prom.query_with_stats(query, self.duration)
-            
-            if result['status'] != 'success':
-                return {'status': 'error', 'error': result.get('error')}
-            
-            # Process results by pod
-            pod_stats = {}
-            for series in result.get('series_data', []):
-                pod_name = series['labels'].get('pod', 'unknown')
-                
-                if pod_name != 'unknown':
-                    stats = series['statistics']
-                    pod_stats[pod_name] = {
-                        'avg_sum_seconds': round(stats.get('avg', 0), 6),
-                        'max_sum_seconds': round(stats.get('max', 0), 6),
-                        'min_sum_seconds': round(stats.get('min', 0), 6),
-                        'latest_sum_seconds': round(stats.get('latest', 0), 6) if stats.get('latest') is not None else None,
-                        'data_points': stats.get('count', 0)
-                    }
-            
-            # Get node mapping for pods
-            node_mapping = await self.utility.get_pod_to_node_mapping()
-            
-            return {
-                'status': 'success',
-                'metric': 'wal_fsync_duration_sum',
-                'title': metric_config.get('title', 'WAL fsync Duration sum'),
-                'unit': 'seconds',
-                'description': 'Cumulative WAL fsync duration per etcd pod',
-                'pod_metrics': pod_stats,
-                'node_mapping': {pod: node_mapping.get(pod, 'unknown') for pod in pod_stats.keys()},
-                'total_pods': len(pod_stats),
-                'overall_stats': result.get('overall_statistics', {})
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error getting WAL fsync duration sum: {e}")
-            return {'status': 'error', 'error': str(e)}
-    
-    async def get_wal_fsync_duration_count_rate(self, prom: PrometheusBaseQuery) -> Dict[str, Any]:
-        """Get WAL fsync duration count rate metrics"""
-        metric_config = self.config.get_metric_by_name("wal_fsync_duration_seconds_count_rate")
-        if not metric_config:
-            return {'status': 'error', 'error': 'Metric configuration not found'}
-        
-        query = metric_config['expr']
-        
-        try:
-            result = await prom.query_with_stats(query, self.duration)
-            
-            if result['status'] != 'success':
-                return {'status': 'error', 'error': result.get('error')}
-            
-            # Process results by pod
-            pod_stats = {}
-            for series in result.get('series_data', []):
-                pod_name = series['labels'].get('pod', 'unknown')
-                
-                if pod_name != 'unknown':
-                    stats = series['statistics']
-                    pod_stats[pod_name] = {
-                        'avg_ops_per_sec': round(stats.get('avg', 0), 3),
-                        'max_ops_per_sec': round(stats.get('max', 0), 3),
-                        'min_ops_per_sec': round(stats.get('min', 0), 3),
-                        'latest_ops_per_sec': round(stats.get('latest', 0), 3) if stats.get('latest') is not None else None,
-                        'data_points': stats.get('count', 0)
-                    }
-            
-            # Get node mapping for pods
-            node_mapping = await self.utility.get_pod_to_node_mapping()
-            
-            return {
-                'status': 'success',
-                'metric': 'wal_fsync_duration_seconds_count_rate',
-                'title': metric_config.get('title', 'WAL fsync Duration count - rate'),
-                'unit': 'operations/sec',
-                'description': 'Rate of WAL fsync operations per etcd pod',
-                'pod_metrics': pod_stats,
-                'node_mapping': {pod: node_mapping.get(pod, 'unknown') for pod in pod_stats.keys()},
-                'total_pods': len(pod_stats),
-                'overall_stats': result.get('overall_statistics', {})
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error getting WAL fsync duration count rate: {e}")
-            return {'status': 'error', 'error': str(e)}
-    
-    async def get_wal_fsync_duration_count(self, prom: PrometheusBaseQuery) -> Dict[str, Any]:
-        """Get WAL fsync duration count metrics"""
-        metric_config = self.config.get_metric_by_name("wal_fsync_duration_seconds_count")
-        if not metric_config:
-            return {'status': 'error', 'error': 'Metric configuration not found'}
-        
-        query = metric_config['expr']
-        
-        try:
-            result = await prom.query_with_stats(query, self.duration)
-            
-            if result['status'] != 'success':
-                return {'status': 'error', 'error': result.get('error')}
-            
-            # Process results by pod
-            pod_stats = {}
-            for series in result.get('series_data', []):
-                pod_name = series['labels'].get('pod', 'unknown')
-                
-                if pod_name != 'unknown':
-                    stats = series['statistics']
-                    pod_stats[pod_name] = {
-                        'avg_count': round(stats.get('avg', 0), 0),
-                        'max_count': round(stats.get('max', 0), 0),
-                        'min_count': round(stats.get('min', 0), 0),
-                        'latest_count': round(stats.get('latest', 0), 0) if stats.get('latest') is not None else None,
-                        'data_points': stats.get('count', 0)
-                    }
-            
-            # Get node mapping for pods
-            node_mapping = await self.utility.get_pod_to_node_mapping()
-            
-            return {
-                'status': 'success',
-                'metric': 'wal_fsync_duration_seconds_count',
-                'title': metric_config.get('title', 'WAL fsync Duration count'),
-                'unit': 'count',
-                'description': 'Total count of WAL fsync operations per etcd pod',
-                'pod_metrics': pod_stats,
-                'node_mapping': {pod: node_mapping.get(pod, 'unknown') for pod in pod_stats.keys()},
-                'total_pods': len(pod_stats),
-                'overall_stats': result.get('overall_statistics', {})
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error getting WAL fsync duration count: {e}")
-            return {'status': 'error', 'error': str(e)}
+    def _get_metric_description(self, metric_name: str) -> str:
+        """Get description for a metric based on its name"""
+        descriptions = {
+            'disk_wal_fsync_seconds_duration_p99': '99th percentile WAL fsync duration per etcd pod',
+            'disk_wal_fsync_duration_seconds_sum_rate': 'Rate of WAL fsync duration sum per etcd pod',
+            'disk_wal_fsync_duration_sum': 'Cumulative WAL fsync duration per etcd pod',
+            'disk_wal_fsync_duration_seconds_count_rate': 'Rate of WAL fsync operations per etcd pod',
+            'disk_wal_fsync_duration_seconds_count': 'Total count of WAL fsync operations per etcd pod'
+        }
+        return descriptions.get(metric_name, f'WAL fsync metric: {metric_name}')
     
     async def get_cluster_summary(self) -> Dict[str, Any]:
         """Get cluster-wide WAL fsync performance summary"""
@@ -361,7 +213,8 @@ class DiskWALFsyncCollector:
                     'pods_with_data': 0,
                     'wal_fsync_performance': 'unknown'
                 },
-                'performance_indicators': {}
+                'performance_indicators': {},
+                'recommendations': []
             }
             
             # Analyze p99 latency
@@ -373,33 +226,46 @@ class DiskWALFsyncCollector:
                 
                 # Check if any pod has p99 latency > 100ms (performance concern)
                 high_latency_pods = [pod for pod, stats in pod_metrics.items() 
-                                   if stats['max_seconds'] > 0.1]
+                                   if stats.get('max_seconds', 0) > 0.1]
                 
-                if not high_latency_pods:
+                # Performance assessment
+                max_latency = max([stats.get('max_seconds', 0) for stats in pod_metrics.values()], default=0)
+                avg_latency = sum([stats.get('avg_seconds', 0) for stats in pod_metrics.values()]) / len(pod_metrics) if pod_metrics else 0
+                
+                if max_latency < 0.01:  # < 10ms
+                    summary['cluster_health']['wal_fsync_performance'] = 'excellent'
+                elif max_latency < 0.05:  # < 50ms
                     summary['cluster_health']['wal_fsync_performance'] = 'good'
-                elif len(high_latency_pods) == 1:
+                elif max_latency < 0.1:   # < 100ms
                     summary['cluster_health']['wal_fsync_performance'] = 'warning'
-                else:
+                else:  # >= 100ms
                     summary['cluster_health']['wal_fsync_performance'] = 'critical'
                 
                 summary['performance_indicators']['high_latency_pods'] = high_latency_pods
-                summary['performance_indicators']['max_p99_latency_seconds'] = max(
-                    [stats['max_seconds'] for stats in pod_metrics.values()], default=0
-                )
-                summary['performance_indicators']['avg_p99_latency_seconds'] = sum(
-                    [stats['avg_seconds'] for stats in pod_metrics.values()]
-                ) / len(pod_metrics) if pod_metrics else 0
+                summary['performance_indicators']['max_p99_latency_seconds'] = max_latency
+                summary['performance_indicators']['avg_p99_latency_seconds'] = avg_latency
+                
+                # Add recommendations
+                if max_latency > 0.1:
+                    summary['recommendations'].append("High WAL fsync latency detected (>100ms). Check disk I/O performance.")
+                if len(high_latency_pods) > 1:
+                    summary['recommendations'].append("Multiple pods showing high latency. Consider cluster-wide storage optimization.")
             
             # Analyze operation rates
-            rate_metric = full_results['metrics'].get('wal_fsync_duration_seconds_count_rate', {})
+            rate_metric = full_results['metrics'].get('disk_wal_fsync_duration_seconds_count_rate', {})
             if rate_metric.get('status') == 'success':
                 pod_metrics = rate_metric.get('pod_metrics', {})
-                summary['performance_indicators']['total_ops_per_sec'] = sum(
-                    [stats['avg_ops_per_sec'] for stats in pod_metrics.values()]
-                )
-                summary['performance_indicators']['max_ops_per_sec_single_pod'] = max(
-                    [stats['max_ops_per_sec'] for stats in pod_metrics.values()], default=0
-                )
+                total_ops = sum([stats.get('avg_ops_per_sec', 0) for stats in pod_metrics.values()])
+                max_single_pod_ops = max([stats.get('max_ops_per_sec', 0) for stats in pod_metrics.values()], default=0)
+                
+                summary['performance_indicators']['total_ops_per_sec'] = round(total_ops, 3)
+                summary['performance_indicators']['max_ops_per_sec_single_pod'] = round(max_single_pod_ops, 3)
+                
+                # Add operation rate recommendations
+                if total_ops > 1000:
+                    summary['recommendations'].append("High WAL fsync operation rate. Monitor for potential performance impact.")
+                elif total_ops < 1:
+                    summary['recommendations'].append("Very low WAL fsync rate. Check if etcd cluster is receiving writes.")
             
             return summary
             
@@ -409,6 +275,36 @@ class DiskWALFsyncCollector:
                 'status': 'error',
                 'error': str(e),
                 'timestamp': datetime.now(pytz.UTC).isoformat()
+            }
+    
+    async def get_metric_by_name(self, metric_name: str) -> Dict[str, Any]:
+        """Get a specific metric by name"""
+        try:
+            metric_config = self.config.get_metric_by_name(metric_name)
+            if not metric_config:
+                return {
+                    'status': 'error',
+                    'error': f'Metric {metric_name} not found in configuration'
+                }
+            
+            prometheus_config = self.ocp_auth.get_prometheus_config()
+            
+            async with PrometheusBaseQuery(prometheus_config) as prom:
+                # Test connection first
+                connection_test = await prom.test_connection()
+                if connection_test['status'] != 'connected':
+                    return {
+                        'status': 'error',
+                        'error': f"Prometheus connection failed: {connection_test.get('error')}"
+                    }
+                
+                return await self._collect_generic_metric(prom, metric_config)
+                
+        except Exception as e:
+            self.logger.error(f"Error getting metric {metric_name}: {e}")
+            return {
+                'status': 'error',
+                'error': str(e)
             }
 
 
@@ -423,6 +319,12 @@ async def get_wal_fsync_cluster_summary(ocp_auth: OCPAuth, duration: str = "1h")
     """Convenience function to get WAL fsync cluster summary"""
     collector = DiskWALFsyncCollector(ocp_auth, duration)
     return await collector.get_cluster_summary()
+
+
+async def get_specific_wal_fsync_metric(ocp_auth: OCPAuth, metric_name: str, duration: str = "1h") -> Dict[str, Any]:
+    """Convenience function to get a specific WAL fsync metric"""
+    collector = DiskWALFsyncCollector(ocp_auth, duration)
+    return await collector.get_metric_by_name(metric_name)
 
 
 # Example usage and testing
@@ -448,31 +350,58 @@ async def main():
         
         print("\n=== WAL Fsync Metrics Results ===")
         print(f"Status: {results['status']}")
-        print(f"Total metrics: {results.get('summary', {}).get('total_metrics', 0)}")
-        print(f"Successful metrics: {results.get('summary', {}).get('successful_metrics', 0)}")
-        
-        # Show summary for each metric
-        for metric_name, metric_data in results.get('metrics', {}).items():
-            if metric_data.get('status') == 'success':
-                print(f"\n{metric_name}:")
-                print(f"  Total pods: {metric_data.get('total_pods', 0)}")
-                pod_metrics = metric_data.get('pod_metrics', {})
-                for pod, stats in list(pod_metrics.items())[:3]:  # Show first 3 pods
-                    print(f"  {pod}: avg={list(stats.values())[0]}")
+        if results['status'] == 'success':
+            print(f"Total metrics: {results.get('summary', {}).get('total_metrics', 0)}")
+            print(f"Successful metrics: {results.get('summary', {}).get('successful_metrics', 0)}")
+            
+            # Show summary for each metric
+            for metric_name, metric_data in results.get('metrics', {}).items():
+                if metric_data.get('status') == 'success':
+                    print(f"\n{metric_name}:")
+                    print(f"  Title: {metric_data.get('title', 'N/A')}")
+                    print(f"  Unit: {metric_data.get('unit', 'N/A')}")
+                    print(f"  Total pods: {metric_data.get('total_pods', 0)}")
+                    
+                    # Show sample pod data
+                    pod_metrics = metric_data.get('pod_metrics', {})
+                    for i, (pod, stats) in enumerate(list(pod_metrics.items())[:2]):  # Show first 2 pods
+                        print(f"  Pod {pod}:")
+                        # Show first metric value
+                        first_key = list(stats.keys())[0] if stats else 'no_data'
+                        if first_key != 'no_data' and first_key in stats:
+                            print(f"    {first_key}: {stats[first_key]}")
+        else:
+            print(f"Error: {results.get('error', 'Unknown error')}")
         
         # Get cluster summary
         print("\n=== Cluster Summary ===")
         summary = await collector.get_cluster_summary()
         if summary['status'] == 'success':
             health = summary['cluster_health']
-            indicators = summary['performance_indicators']
+            indicators = summary.get('performance_indicators', {})
+            recommendations = summary.get('recommendations', [])
+            
             print(f"WAL fsync performance: {health['wal_fsync_performance']}")
             print(f"Total etcd pods: {health['total_etcd_pods']}")
-            print(f"Max P99 latency: {indicators.get('max_p99_latency_seconds', 0):.6f}s")
-            print(f"Avg P99 latency: {indicators.get('avg_p99_latency_seconds', 0):.6f}s")
+            print(f"Pods with data: {health['pods_with_data']}")
+            
+            if 'max_p99_latency_seconds' in indicators:
+                print(f"Max P99 latency: {indicators['max_p99_latency_seconds']:.6f}s")
+                print(f"Avg P99 latency: {indicators['avg_p99_latency_seconds']:.6f}s")
+            
+            if 'total_ops_per_sec' in indicators:
+                print(f"Total ops/sec: {indicators['total_ops_per_sec']}")
+            
+            if recommendations:
+                print("Recommendations:")
+                for rec in recommendations:
+                    print(f"  - {rec}")
+        else:
+            print(f"Summary error: {summary.get('error', 'Unknown error')}")
         
     except Exception as e:
         print(f"Error in main: {e}")
+        logging.exception("Detailed error:")
 
 
 if __name__ == "__main__":

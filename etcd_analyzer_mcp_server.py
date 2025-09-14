@@ -9,7 +9,7 @@ import sys
 import asyncio
 import logging
 import warnings
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 from datetime import datetime
 import pytz
 
@@ -83,6 +83,74 @@ class ETCDMetricsResponse(MCPBaseModel):
     duration: Optional[str] = None
 
 
+class ETCDGeneralInfoResponse(MCPBaseModel):
+    status: str = Field(description="Status of the general info collection operation")
+    data: Optional[Dict[str, Any]] = Field(None, description="General etcd cluster metrics including CPU, memory, database size, proposals, leadership, and performance statistics")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of when metrics were collected")
+    category: str = Field(default="general_info", description="Metric category identifier")
+    duration: str = Field(description="Time range used for metrics collection")
+
+
+class ETCDCompactDefragResponse(MCPBaseModel):
+    status: str = Field(description="Status of the compact/defrag metrics collection")
+    data: Optional[Dict[str, Any]] = Field(None, description="Database compaction and defragmentation performance metrics including duration, rates, and page fault statistics")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of metrics collection")
+    category: str = Field(default="disk_compact_defrag", description="Metric category identifier")
+    duration: str = Field(description="Time range used for metrics collection")
+
+
+class ETCDWALFsyncResponse(MCPBaseModel):
+    status: str = Field(description="Status of WAL fsync metrics collection")
+    data: Optional[Dict[str, Any]] = Field(None, description="Write-Ahead Log fsync performance metrics including P99 latency, operation rates, duration statistics, and cluster-wide performance analysis")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of metrics collection")
+    category: str = Field(default="disk_wal_fsync", description="Metric category identifier")
+    duration: str = Field(description="Time range used for metrics collection")
+
+
+class ETCDBackendCommitResponse(MCPBaseModel):
+    status: str = Field(description="Status of backend commit metrics collection")
+    data: Optional[Dict[str, Any]] = Field(None, description="Backend database commit operation performance metrics including P99 latency, operation rates, efficiency analysis, and performance recommendations")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of metrics collection")
+    category: str = Field(default="disk_backend_commit", description="Metric category identifier")
+    duration: str = Field(description="Time range used for metrics collection")
+
+
+class ETCDNetworkIOResponse(MCPBaseModel):
+    status: str = Field(description="Status of network I/O metrics collection")
+    data: Optional[Dict[str, Any]] = Field(None, description="Comprehensive network I/O performance metrics including container network throughput, peer communication latency, client gRPC bandwidth, node network utilization, error rates, and active stream counts")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of metrics collection")
+    category: str = Field(default="network_io", description="Metric category identifier")
+    duration: str = Field(description="Time range used for metrics collection")
+
+
+class ETCDDiskIOResponse(MCPBaseModel):
+    status: str = Field(description="Status of disk I/O metrics collection")
+    data: Optional[Dict[str, Any]] = Field(None, description="Disk I/O performance metrics including container disk write rates, node disk read/write throughput, IOPS by device, device inventory, and storage optimization recommendations")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of metrics collection")
+    category: str = Field(default="disk_io", description="Metric category identifier")
+    duration: str = Field(description="Time range used for metrics collection")
+
+
+class OCPClusterInfoResponse(MCPBaseModel):
+    status: str = Field(description="Status of cluster information collection")
+    data: Optional[Dict[str, Any]] = Field(None, description="Comprehensive OpenShift cluster information including cluster identification, node inventory with specifications, resource counts, network policy statistics, and operator status")
+    error: Optional[str] = Field(None, description="Error message if collection failed")
+    timestamp: str = Field(description="ISO timestamp of information collection")
+
+
+class ServerHealthResponse(MCPBaseModel):
+    status: str = Field(description="Overall server health status: 'healthy' or 'unhealthy'")
+    timestamp: str = Field(description="ISO timestamp of health check")
+    collectors_initialized: bool = Field(description="Whether all metric collectors are properly initialized")
+    details: Dict[str, bool] = Field(description="Individual status of each collector component")
+
+
 # Initialize MCP server
 mcp = FastMCP("OpenShift etcd Analyzer")
 
@@ -138,7 +206,7 @@ async def initialize_collectors():
 # MCP Tool Definitions
 # Health check tool (instead of HTTP endpoint)
 @mcp.tool()
-async def get_server_health() -> Dict[str, Any]:
+async def get_server_health() -> ServerHealthResponse:
     """
     Get server health status and collector initialization status.
     
@@ -151,11 +219,7 @@ async def get_server_health() -> Dict[str, Any]:
     Use this tool to verify that the etcd analyzer is properly configured and ready to collect metrics.
     
     Returns:
-        Dict: Health status information including:
-        - status: 'healthy' or 'unhealthy' overall status
-        - collectors_initialized: Boolean indicating if all collectors are ready
-        - details: Individual status of each collector component
-        - timestamp: When the health check was performed
+        ServerHealthResponse: Health status information including overall status, collector readiness, and component details
     """
     collectors_initialized = all([
         ocp_auth is not None,
@@ -168,11 +232,11 @@ async def get_server_health() -> Dict[str, Any]:
         disk_io_collector is not None
     ])
     
-    return {
-        "status": "healthy" if collectors_initialized else "unhealthy",
-        "timestamp": datetime.now(pytz.UTC).isoformat(),
-        "collectors_initialized": collectors_initialized,
-        "details": {
+    return ServerHealthResponse(
+        status="healthy" if collectors_initialized else "unhealthy",
+        timestamp=datetime.now(pytz.UTC).isoformat(),
+        collectors_initialized=collectors_initialized,
+        details={
             "ocp_auth": ocp_auth is not None,
             "cluster_collector": cluster_collector is not None,
             "general_collector": general_collector is not None,
@@ -183,11 +247,11 @@ async def get_server_health() -> Dict[str, Any]:
             "disk_io_collector": disk_io_collector is not None,
             "cluster_info_collector": cluster_info_collector is not None
         }
-    }
+    )
 
 
 @mcp.tool()
-async def get_ocp_cluster_info() -> Dict[str, Any]:
+async def get_ocp_cluster_info() -> OCPClusterInfoResponse:
     """
     Get comprehensive OpenShift cluster information and infrastructure details.
     
@@ -202,38 +266,36 @@ async def get_ocp_cluster_info() -> Dict[str, Any]:
     
     This provides context for etcd performance by showing the cluster environment.
     
-    No parameters required - collects current cluster state.
-    
     Returns:
-        Dict: Comprehensive cluster information including:
-        - cluster_name, cluster_version, platform details
-        - Complete node inventory with specifications and health
-        - Resource counts across all namespaces
-        - Network policy and resource statistics
-        - Operator and MCP status information
-        - Collection timestamp
+        OCPClusterInfoResponse: Comprehensive cluster information including cluster details, node inventory, resource statistics, and operator status
     """
     try:
+        global cluster_info_collector
         if cluster_info_collector is None:
-            return {
-                "status": "error",
-                "error": "ClusterInfoCollector not initialized",
-                "timestamp": datetime.now(pytz.UTC).isoformat()
-            }
+            # Lazy initialize the ClusterInfoCollector on first use
+            try:
+                cluster_info_collector = ClusterInfoCollector()
+                await cluster_info_collector.initialize()
+            except Exception as init_err:
+                return OCPClusterInfoResponse(
+                    status="error",
+                    error=f"Failed to initialize ClusterInfoCollector: {init_err}",
+                    timestamp=datetime.now(pytz.UTC).isoformat()
+                )
 
         info = await cluster_info_collector.collect_cluster_info()
-        return {
-            "status": "success",
-            "data": cluster_info_collector.to_dict(info),
-            "timestamp": datetime.now(pytz.UTC).isoformat()
-        }
+        return OCPClusterInfoResponse(
+            status="success",
+            data=cluster_info_collector.to_dict(info),
+            timestamp=datetime.now(pytz.UTC).isoformat()
+        )
     except Exception as e:
         logger.error(f"Error collecting OCP cluster info: {e}")
-        return {
-            "status": "error",
-            "error": str(e),
-            "timestamp": datetime.now(pytz.UTC).isoformat()
-        }
+        return OCPClusterInfoResponse(
+            status="error",
+            error=str(e),
+            timestamp=datetime.now(pytz.UTC).isoformat()
+        )
 
 @mcp.tool()
 async def get_etcd_cluster_status() -> ETCDClusterStatusResponse:
@@ -247,15 +309,8 @@ async def get_etcd_cluster_status() -> ETCDClusterStatusResponse:
     - Leadership information and changes
     - Basic cluster metrics
     
-    No parameters required - uses current cluster configuration.
-    
     Returns:
-        ETCDClusterStatusResponse: Complete cluster status including:
-        - cluster_health: Health status of all endpoints
-        - member_status: List of all cluster members with their roles
-        - endpoint_status: Detailed endpoint information including leader
-        - leader_info: Current leader details and Raft information
-        - cluster_metrics: Basic cluster metrics and configuration
+        ETCDClusterStatusResponse: Complete cluster status including health, members, endpoints, leadership, and basic metrics
     """
     try:
         if not cluster_collector:
@@ -284,7 +339,7 @@ async def get_etcd_cluster_status() -> ETCDClusterStatusResponse:
 
 
 @mcp.tool()
-async def get_etcd_general_info(duration: str = "1h") -> ETCDMetricsResponse:
+async def get_etcd_general_info(duration: str = "1h") -> ETCDGeneralInfoResponse:
     """
     Get general etcd cluster information including resource usage and operational metrics.
     
@@ -298,49 +353,41 @@ async def get_etcd_general_info(duration: str = "1h") -> ETCDMetricsResponse:
     
     Args:
         duration: Time range for metrics collection. Examples: '15m', '30m', '1h', '2h', '6h', '12h', '1d'
-                 Default: '1h' (1 hour)
     
     Returns:
-        ETCDMetricsResponse: General cluster information including:
-        - Resource usage statistics (CPU, memory, disk space)
-        - Operational performance metrics
-        - Proposal and leadership statistics
-        - Database size and utilization data
+        ETCDGeneralInfoResponse: General cluster information including resource usage, operational performance, and health statistics
     """
     try:
         if not general_collector:
-            return ETCDMetricsResponse(
+            return ETCDGeneralInfoResponse(
                 status="error",
                 error="General info collector not initialized",
                 timestamp=datetime.now(pytz.UTC).isoformat(),
-                category="general_info",
                 duration=duration
             )
         
         result = await general_collector.collect_metrics(duration)
         
-        return ETCDMetricsResponse(
+        return ETCDGeneralInfoResponse(
             status=result.get('status', 'unknown'),
             data=result.get('data'),
             error=result.get('error'),
             timestamp=result.get('timestamp', datetime.now(pytz.UTC).isoformat()),
-            category="general_info",
             duration=duration
         )
         
     except Exception as e:
         logger.error(f"Error collecting general info: {e}")
-        return ETCDMetricsResponse(
+        return ETCDGeneralInfoResponse(
             status="error",
             error=str(e),
             timestamp=datetime.now(pytz.UTC).isoformat(),
-            category="general_info",
             duration=duration
         )
 
 
 @mcp.tool()
-async def get_etcd_disk_compact_defrag(duration: str = "1h") -> ETCDMetricsResponse:
+async def get_etcd_disk_compact_defrag(duration: str = "1h") -> ETCDCompactDefragResponse:
     """
     Get etcd database compaction and defragmentation performance metrics.
     
@@ -354,48 +401,40 @@ async def get_etcd_disk_compact_defrag(duration: str = "1h") -> ETCDMetricsRespo
     
     Args:
         duration: Time range for metrics collection. Examples: '15m', '30m', '1h', '2h', '6h', '12h', '1d'
-                 Default: '1h' (1 hour)
     
     Returns:
-        ETCDMetricsResponse: Compaction and defragmentation metrics including:
-        - Compaction operation duration and frequency
-        - Defragmentation operation performance
-        - Page fault statistics and memory pressure indicators
-        - Performance analysis and efficiency recommendations
+        ETCDCompactDefragResponse: Compaction and defragmentation metrics with performance analysis and recommendations
     """
     try:
         if not compact_defrag_collector:
-            return ETCDMetricsResponse(
+            return ETCDCompactDefragResponse(
                 status="error",
                 error="Compact/defrag collector not initialized",
                 timestamp=datetime.now(pytz.UTC).isoformat(),
-                category="disk_compact_defrag",
                 duration=duration
             )
         
         result = await compact_defrag_collector.collect_metrics(duration)
         
-        return ETCDMetricsResponse(
+        return ETCDCompactDefragResponse(
             status=result.get('status', 'unknown'),
             data=result.get('data'),
             error=result.get('error'),
             timestamp=result.get('timestamp', datetime.now(pytz.UTC).isoformat()),
-            category="disk_compact_defrag",
             duration=duration
         )
         
     except Exception as e:
         logger.error(f"Error collecting compact/defrag metrics: {e}")
-        return ETCDMetricsResponse(
+        return ETCDCompactDefragResponse(
             status="error",
             error=str(e),
             timestamp=datetime.now(pytz.UTC).isoformat(),
-            category="disk_compact_defrag",
             duration=duration
         )
 
 @mcp.tool()
-async def get_etcd_disk_wal_fsync(duration: str = "1h") -> ETCDMetricsResponse:
+async def get_etcd_disk_wal_fsync(duration: str = "1h") -> ETCDWALFsyncResponse:
     """
     Get etcd Write-Ahead Log (WAL) fsync performance metrics.
     
@@ -410,49 +449,58 @@ async def get_etcd_disk_wal_fsync(duration: str = "1h") -> ETCDMetricsResponse:
     
     Args:
         duration: Time range for metrics collection. Examples: '15m', '30m', '1h', '2h', '6h', '12h', '1d'
-                 Default: '1h' (1 hour)
     
     Returns:
-        ETCDMetricsResponse: WAL fsync performance metrics including:
-        - P99 fsync latency per etcd pod with performance evaluation
-        - Fsync operation rates and throughput statistics
-        - Cumulative fsync duration and efficiency analysis
-        - Cluster-wide performance summary with health indicators
-        - Storage performance recommendations and bottleneck identification
+        ETCDWALFsyncResponse: WAL fsync performance metrics including P99 latency, operation rates, and cluster-wide analysis with storage performance recommendations
     """
     try:
+        global ocp_auth, wal_fsync_collector
         if not wal_fsync_collector:
-            return ETCDMetricsResponse(
-                status="error",
-                error="WAL fsync collector not initialized",
-                timestamp=datetime.now(pytz.UTC).isoformat(),
-                category="disk_wal_fsync",
-                duration=duration
-            )
+            # Lazy initialize if startup initialization didn't complete
+            if ocp_auth is None:
+                ocp_auth = OCPAuth()
+                auth_success = await ocp_auth.initialize()
+                if not auth_success:
+                    return ETCDWALFsyncResponse(
+                        status="error",
+                        error="Failed to initialize OpenShift auth for WAL fsync",
+                        timestamp=datetime.now(pytz.UTC).isoformat(),
+                        duration=duration
+                    )
+            try:
+                wal_fsync_collector = DiskWALFsyncCollector(ocp_auth, duration)
+            except Exception as e:
+                return ETCDWALFsyncResponse(
+                    status="error",
+                    error=f"Failed to initialize DiskWALFsyncCollector: {e}",
+                    timestamp=datetime.now(pytz.UTC).isoformat(),
+                    duration=duration
+                )
         
+        # Update duration for this collection
+        wal_fsync_collector.duration = duration
         result = await wal_fsync_collector.collect_all_metrics()
         
-        return ETCDMetricsResponse(
+        return ETCDWALFsyncResponse(
             status=result.get('status', 'unknown'),
             data=result,
             error=result.get('error'),
             timestamp=result.get('timestamp', datetime.now(pytz.UTC).isoformat()),
-            category="disk_wal_fsync",
             duration=duration
         )
         
     except Exception as e:
         logger.error(f"Error collecting WAL fsync metrics: {e}")
-        return ETCDMetricsResponse(
+        return ETCDWALFsyncResponse(
             status="error",
             error=str(e),
             timestamp=datetime.now(pytz.UTC).isoformat(),
-            category="disk_wal_fsync",
             duration=duration
         )
 
+
 @mcp.tool()
-async def get_etcd_disk_backend_commit(duration: str = "1h") -> ETCDMetricsResponse:
+async def get_etcd_disk_backend_commit(duration: str = "1h") -> ETCDBackendCommitResponse:
     """
     Get etcd backend commit operation performance metrics.
     
@@ -466,48 +514,40 @@ async def get_etcd_disk_backend_commit(duration: str = "1h") -> ETCDMetricsRespo
     
     Args:
         duration: Time range for metrics collection. Examples: '15m', '30m', '1h', '2h', '6h', '12h', '1d'
-                 Default: '1h' (1 hour)
     
     Returns:
-        ETCDMetricsResponse: Backend commit performance metrics including:
-        - P99 commit latency statistics and performance grades
-        - Commit operation throughput and efficiency scores
-        - Performance analysis with latency and rate evaluation
-        - Storage optimization recommendations
+        ETCDBackendCommitResponse: Backend commit performance metrics including P99 latency, operation throughput, and storage optimization recommendations
     """
     try:
         if not backend_commit_collector:
-            return ETCDMetricsResponse(
+            return ETCDBackendCommitResponse(
                 status="error",
                 error="Backend commit collector not initialized",
                 timestamp=datetime.now(pytz.UTC).isoformat(),
-                category="disk_backend_commit",
                 duration=duration
             )
         
         result = await backend_commit_collector.collect_metrics(duration)
         
-        return ETCDMetricsResponse(
+        return ETCDBackendCommitResponse(
             status=result.get('status', 'unknown'),
             data=result.get('data'),
             error=result.get('error'),
             timestamp=result.get('timestamp', datetime.now(pytz.UTC).isoformat()),
-            category="disk_backend_commit",
             duration=duration
         )
         
     except Exception as e:
         logger.error(f"Error collecting backend commit metrics: {e}")
-        return ETCDMetricsResponse(
+        return ETCDBackendCommitResponse(
             status="error",
             error=str(e),
             timestamp=datetime.now(pytz.UTC).isoformat(),
-            category="disk_backend_commit",
             duration=duration
         )
 
 @mcp.tool()
-async def get_etcd_network_io(duration: str = "1h") -> ETCDMetricsResponse:
+async def get_etcd_network_io(duration: str = "1h") -> ETCDNetworkIOResponse:
     """
     Get etcd network I/O performance and utilization metrics.
     
@@ -525,17 +565,9 @@ async def get_etcd_network_io(duration: str = "1h") -> ETCDMetricsResponse:
     
     Args:
         duration: Time range for metrics collection. Examples: '15m', '30m', '1h', '2h', '6h', '12h', '1d'
-                 Default: '1h' (1 hour)
     
     Returns:
-        ETCDMetricsResponse: Network I/O performance metrics including:
-        - Container network throughput per etcd pod and aggregated by node
-        - Peer round-trip time P99 latency and data transfer rates
-        - Client gRPC network bandwidth utilization
-        - Node-level network interface utilization and packet statistics
-        - Network error rates and packet drop statistics
-        - Active gRPC stream counts for watches and leases
-        - Network health assessment and performance recommendations
+        ETCDNetworkIOResponse: Network I/O performance metrics including container/peer/client network statistics, node utilization, error rates, and health assessment
     """
     try:
         global ocp_auth, network_collector
@@ -545,47 +577,47 @@ async def get_etcd_network_io(duration: str = "1h") -> ETCDMetricsResponse:
                 ocp_auth = OCPAuth()
                 auth_success = await ocp_auth.initialize()
                 if not auth_success:
-                    return ETCDMetricsResponse(
+                    return ETCDNetworkIOResponse(
                         status="error",
                         error="Failed to initialize OpenShift auth for network I/O",
                         timestamp=datetime.now(pytz.UTC).isoformat(),
-                        category="network_io",
                         duration=duration
                     )
             try:
                 network_collector = NetworkIOCollector(ocp_auth)
             except Exception as e:
-                return ETCDMetricsResponse(
+                return ETCDNetworkIOResponse(
                     status="error",
                     error=f"Failed to initialize NetworkIOCollector: {e}",
                     timestamp=datetime.now(pytz.UTC).isoformat(),
-                    category="network_io",
                     duration=duration
                 )
         
-        result = await network_collector.collect_all_metrics(duration)
+        # Prefer collect_all_metrics; fall back to collect_metrics for compatibility
+        if hasattr(network_collector, "collect_all_metrics"):
+            result = await network_collector.collect_all_metrics(duration)
+        else:
+            result = await network_collector.collect_metrics(duration)
         
-        return ETCDMetricsResponse(
+        return ETCDNetworkIOResponse(
             status=result.get('status', 'unknown'),
             data=result,
             error=result.get('error'),
-            timestamp=result.get('collection_time', datetime.now(pytz.UTC).isoformat()),
-            category="network_io",
+            timestamp=(result.get('collection_time') or result.get('timestamp') or datetime.now(pytz.UTC).isoformat()),
             duration=duration
         )
         
     except Exception as e:
         logger.error(f"Error collecting network I/O metrics: {e}")
-        return ETCDMetricsResponse(
+        return ETCDNetworkIOResponse(
             status="error",
             error=str(e),
             timestamp=datetime.now(pytz.UTC).isoformat(),
-            category="network_io",
             duration=duration
         )
 
 @mcp.tool()
-async def get_etcd_disk_io(duration: str = "1h") -> ETCDMetricsResponse:
+async def get_etcd_disk_io(duration: str = "1h") -> ETCDDiskIOResponse:
     """
     Get etcd disk I/O performance metrics including throughput and IOPS.
     
@@ -606,16 +638,9 @@ async def get_etcd_disk_io(duration: str = "1h") -> ETCDMetricsResponse:
     
     Args:
         duration: Time range for metrics collection. Examples: '15m', '30m', '1h', '2h', '6h', '12h', '1d'
-                 Default: '1h' (1 hour)
     
     Returns:
-        ETCDMetricsResponse: Disk I/O performance metrics including:
-        - Container disk write rates per etcd pod aggregated by master node
-        - Node disk read/write throughput (bytes/second) by storage device
-        - Node disk read/write IOPS by storage device and master node
-        - Device inventory and performance characteristics
-        - I/O performance analysis with bottleneck identification
-        - Storage optimization recommendations
+        ETCDDiskIOResponse: Disk I/O performance metrics including container write rates, node throughput/IOPS, device statistics, and storage optimization recommendations
     """
     try:
         global ocp_auth, disk_io_collector
@@ -625,21 +650,19 @@ async def get_etcd_disk_io(duration: str = "1h") -> ETCDMetricsResponse:
                 ocp_auth = OCPAuth()
                 auth_success = await ocp_auth.initialize()
                 if not auth_success:
-                    return ETCDMetricsResponse(
+                    return ETCDDiskIOResponse(
                         status="error",
                         error="Failed to initialize OpenShift auth for disk I/O",
                         timestamp=datetime.now(pytz.UTC).isoformat(),
-                        category="disk_io",
                         duration=duration
                     )
             try:
                 disk_io_collector = DiskIOCollector(ocp_auth, duration)
             except Exception as e:
-                return ETCDMetricsResponse(
+                return ETCDDiskIOResponse(
                     status="error",
                     error=f"Failed to initialize DiskIOCollector: {e}",
                     timestamp=datetime.now(pytz.UTC).isoformat(),
-                    category="disk_io",
                     duration=duration
                 )
         
@@ -647,22 +670,20 @@ async def get_etcd_disk_io(duration: str = "1h") -> ETCDMetricsResponse:
         disk_io_collector.duration = duration
         result = await disk_io_collector.collect_all_metrics()
         
-        return ETCDMetricsResponse(
+        return ETCDDiskIOResponse(
             status=result.get('status', 'unknown'),
             data=result,
             error=result.get('error'),
             timestamp=result.get('timestamp', datetime.now(pytz.UTC).isoformat()),
-            category="disk_io",
             duration=duration
         )
         
     except Exception as e:
         logger.error(f"Error collecting disk I/O metrics: {e}")
-        return ETCDMetricsResponse(
+        return ETCDDiskIOResponse(
             status="error",
             error=str(e),
             timestamp=datetime.now(pytz.UTC).isoformat(),
-            category="disk_io",
             duration=duration
         )
 

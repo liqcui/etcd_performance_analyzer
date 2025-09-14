@@ -49,21 +49,31 @@ class DiskIOCollector:
                     }
                 
                 # Collect all metrics
+                # Map config metric names to collector method names
+                name_normalization = {
+                    'disk_io_container_disk_writes': 'container_disk_writes',
+                    'disk_io_node_disk_throughput_read': 'node_disk_throughput_read',
+                    'disk_io_node_disk_throughput_write': 'node_disk_throughput_write',
+                    'disk_io_node_disk_iops_read': 'node_disk_iops_read',
+                    'disk_io_node_disk_iops_write': 'node_disk_iops_write',
+                }
+
                 results = {}
                 for metric_config in self.metrics:
                     metric_name = metric_config['name']
+                    normalized_name = name_normalization.get(metric_name, metric_name)
                     self.logger.info(f"Collecting metric: {metric_name}")
                     
                     try:
-                        if metric_name == 'container_disk_writes':
+                        if normalized_name == 'container_disk_writes':
                             results[metric_name] = await self.collect_container_disk_writes(prom_client)
-                        elif metric_name == 'node_disk_throughput_read':
+                        elif normalized_name == 'node_disk_throughput_read':
                             results[metric_name] = await self.collect_node_disk_throughput_read(prom_client)
-                        elif metric_name == 'node_disk_throughput_write':
+                        elif normalized_name == 'node_disk_throughput_write':
                             results[metric_name] = await self.collect_node_disk_throughput_write(prom_client)
-                        elif metric_name == 'node_disk_iops_read':
+                        elif normalized_name == 'node_disk_iops_read':
                             results[metric_name] = await self.collect_node_disk_iops_read(prom_client)
-                        elif metric_name == 'node_disk_iops_write':
+                        elif normalized_name == 'node_disk_iops_write':
                             results[metric_name] = await self.collect_node_disk_iops_write(prom_client)
                         else:
                             self.logger.warning(f"Unknown metric: {metric_name}")
@@ -98,7 +108,7 @@ class DiskIOCollector:
     async def collect_container_disk_writes(self, prom_client: PrometheusBaseQuery) -> Dict[str, Any]:
         """Collect etcd container disk write metrics"""
         try:
-            metric_config = self.config.get_metric_by_name('container_disk_writes')
+            metric_config = self.config.get_metric_by_name('disk_io_container_disk_writes')
             if not metric_config:
                 return {'status': 'error', 'error': 'Metric configuration not found'}
             
@@ -173,7 +183,7 @@ class DiskIOCollector:
     async def collect_node_disk_throughput_read(self, prom_client: PrometheusBaseQuery) -> Dict[str, Any]:
         """Collect node disk read throughput metrics"""
         try:
-            metric_config = self.config.get_metric_by_name('node_disk_throughput_read')
+            metric_config = self.config.get_metric_by_name('disk_io_node_disk_throughput_read')
             if not metric_config:
                 return {'status': 'error', 'error': 'Metric configuration not found'}
             
@@ -250,7 +260,7 @@ class DiskIOCollector:
     async def collect_node_disk_throughput_write(self, prom_client: PrometheusBaseQuery) -> Dict[str, Any]:
         """Collect node disk write throughput metrics"""
         try:
-            metric_config = self.config.get_metric_by_name('node_disk_throughput_write')
+            metric_config = self.config.get_metric_by_name('disk_io_node_disk_throughput_write')
             if not metric_config:
                 return {'status': 'error', 'error': 'Metric configuration not found'}
             
@@ -327,7 +337,7 @@ class DiskIOCollector:
     async def collect_node_disk_iops_read(self, prom_client: PrometheusBaseQuery) -> Dict[str, Any]:
         """Collect node disk read IOPS metrics"""
         try:
-            metric_config = self.config.get_metric_by_name('node_disk_iops_read')
+            metric_config = self.config.get_metric_by_name('disk_io_node_disk_iops_read')
             if not metric_config:
                 return {'status': 'error', 'error': 'Metric configuration not found'}
             
@@ -404,7 +414,7 @@ class DiskIOCollector:
     async def collect_node_disk_iops_write(self, prom_client: PrometheusBaseQuery) -> Dict[str, Any]:
         """Collect node disk write IOPS metrics"""
         try:
-            metric_config = self.config.get_metric_by_name('node_disk_iops_write')
+            metric_config = self.config.get_metric_by_name('disk_io_node_disk_iops_write')
             if not metric_config:
                 return {'status': 'error', 'error': 'Metric configuration not found'}
             

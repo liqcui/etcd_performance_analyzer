@@ -1,0 +1,30 @@
+metrics:
+   #disk_wal_fsync
+  - name: disk_wal_fsync_seconds_duration_p99
+    expr: 'histogram_quantile(0.99, sum(rate(etcd_disk_wal_fsync_duration_seconds_bucket{namespace="openshift-etcd",pod=~".*"}[5m])) by (pod, le))'
+    unit: seconds
+    category: disk_wal_fsync
+
+  - name: disk_wal_fsync_duration_seconds_sum_rate
+    title: "WAL fsync Duration sum - rate"
+    expr: 'irate(etcd_disk_wal_fsync_duration_seconds_sum{namespace="openshift-etcd",pod=~".*"}[2m])'
+    unit: seconds
+    category: disk_wal_fsync
+
+  - name: disk_wal_fsync_duration_sum
+    title: "WAL fsync Duration sum"
+    expr: 'etcd_disk_wal_fsync_duration_seconds_sum{namespace="openshift-etcd",pod=~".*"}'
+    unit: seconds
+    category: disk_wal_fsync
+
+  - name: disk_wal_fsync_duration_seconds_count_rate
+    title: "WAL fsync Duration count - rate"
+    expr: 'irate(etcd_disk_wal_fsync_duration_seconds_count{namespace="openshift-etcd",pod=~".*"}[2m])'
+    unit: count
+    category: disk_wal_fsync
+
+  - name: disk_wal_fsync_duration_seconds_count
+    title: "WAL fsync Duration count"
+    expr: 'etcd_disk_wal_fsync_duration_seconds_count{namespace="openshift-etcd",pod=~".*"}'
+    unit: count
+    category: disk_wal_fsync

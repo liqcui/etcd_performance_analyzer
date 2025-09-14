@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ocp-etcd-analyzer-mcp"
+version = "1.0.0"
+description = "MCP Server for OpenShift etcd cluster monitoring and analysis"
+authors = [
+    {name = "OpenShift etcd Analyzer", email = "admin@example.com"}
+]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.8"
+dependencies = [
+    "asyncio>=3.4.1",
+    "fastapi>=0.115.7",
+    "fastmcp>=1.12.4",
+    "langgraph>=0.3",
+    "langchain>=0.3",
+    "kubernetes>=29.0.0",
+    "prometheus-api-client>=0.5.3",
+    "requests>=2.31.0",
+    "pydantic>=2.0.0",
+    "pyyaml>=6.0.1",
+    "aiohttp>=3.8.0",
+    "uvicorn>=0.20.0",
+    "python-dateutil>=2.8.0",
+    "pytz>=2023.3"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0"
+]
+
+[project.scripts]
+ocp-etcd-mcp = "ocp_etcd_analyzer_mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["*"]
+
+[tool.black]
+line-length = 88
+target-version = ['py38']
+
+[tool.mypy]
+python_version = "3.8"
+warn_return_any = true
+warn_unused_configs = true

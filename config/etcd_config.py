@@ -123,11 +123,21 @@ class ETCDConfig:
         """Get specific metric by name"""
         self.logger.debug(f"Searching for metric: {metric_name}")
         
+        # Handle metric names with prefixes (network_io_xxx -> xxx)
+        clean_name = metric_name
+        if metric_name.startswith('network_io_'):
+            clean_name = metric_name[11:]  # Remove 'network_io_' prefix
+        
         for category_name, category_metrics in self.metrics_config.items():
             self.logger.debug(f"Checking category {category_name} with {len(category_metrics)} metrics")
             for metric in category_metrics:
-                if metric['name'] == metric_name:
+                # Check both full name and clean name
+                if metric['name'] == metric_name or metric['name'] == clean_name:
                     self.logger.debug(f"Found metric {metric_name} in category {category_name}")
+                    return metric
+                # Also check for metric names with network_io_ prefix in config
+                if metric['name'].startswith('network_io_') and metric['name'] == f"network_io_{clean_name}":
+                    self.logger.debug(f"Found metric {metric_name} with prefix in category {category_name}")
                     return metric
         
         self.logger.warning(f"Metric {metric_name} not found in configuration")
@@ -167,7 +177,7 @@ class ETCDConfig:
             },
             'network_io': {
                 'description': 'Network I/O and peer communication metrics',
-                'collector_class': 'DiskBackendCommitCollector',
+                'collector_class': 'NetworkIOCollector',
                 'file': 'etcd_network_io.py'
             },
             'disk_io': {
@@ -175,6 +185,38 @@ class ETCDConfig:
                 'collector_class': 'DiskIOCollector', 
                 'file': 'etcd_disk_io.py'
             }
+        }
+    
+    def get_network_io_metrics(self) -> Dict[str, List[str]]:
+        """Get network_io metrics grouped by type"""
+        network_metrics = self.get_metrics_by_category('network_io')
+        
+        # Group metrics by function type
+        # container_metrics = []
+        pods_metrics = []
+        node_metrics = []
+        cluster_metrics = []
+        
+        for metric in network_metrics:
+            name = metric['name']
+            
+            # Container/Pod level metrics - check with and without network_io_ prefix
+            clean_name = name.replace('network_io_', '') if name.startswith('network_io_') else name
+            if any(x in clean_name for x in ['container_network', 'peer2peer_latency', 'peer_received', 'peer_sent', 'client_grpc']):
+                pods_metrics.append(clean_name)
+                # container_metrics.append(clean_name)
+            # Node level metrics  
+            elif any(x in clean_name for x in ['node_network']):
+                node_metrics.append(clean_name)
+            # Cluster level metrics
+            elif any(x in clean_name for x in ['grpc_active']):
+                cluster_metrics.append(clean_name)
+        
+        return {
+            # 'container_metrics': container_metrics,
+            'pods_metrics': pods_metrics,
+            'node_metrics': node_metrics,
+            'cluster_metrics': cluster_metrics
         }
     
     def validate_config(self) -> bool:
@@ -205,7 +247,8 @@ class ETCDConfig:
             'metrics_by_category': {
                 cat: len(metrics) for cat, metrics in self.metrics_config.items()
             },
-            'all_metric_names': self.get_all_metric_names()
+            'all_metric_names': self.get_all_metric_names(),
+            'network_io_metrics': self.get_network_io_metrics()
         }
 
 

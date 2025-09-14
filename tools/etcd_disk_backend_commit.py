@@ -116,7 +116,7 @@ class DiskBackendCommitCollector:
                 return {
                     "status": "success",
                     "data": {
-                        "metrics": result.get("metrics", {}),
+                        "pods_metrics": result.get("metrics", {}),
                         "summary": result.get("summary", {})
                     },
                     "error": None,

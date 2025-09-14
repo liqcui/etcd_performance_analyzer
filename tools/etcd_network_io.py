@@ -18,7 +18,6 @@ class NetworkIOCollector:
     
     def __init__(self, ocp_auth):
         self.ocp_auth = ocp_auth
-        # Derive Prometheus config from OCP auth (server initializes auth first)
         self.prometheus_config = self.ocp_auth.get_prometheus_config()
         self.logger = logging.getLogger(__name__)
         self.utility = mcpToolsUtility(ocp_auth)
@@ -28,102 +27,102 @@ class NetworkIOCollector:
         self._node_mappings = {}
         self._cache_valid = False
     
-    async def collect_all_metrics(self, duration: str = "1h") -> Dict[str, Any]:
-        """Collect all network I/O metrics"""
+    async def collect_metrics(self, duration: str = "1h") -> Dict[str, Any]:
+        """Main entrypoint for collecting all network I/O metrics using names/titles from metrics-etcd.yml"""
         try:
             self.logger.info(f"Starting network I/O metrics collection for duration: {duration}")
-            
-            # Get network_io category metrics from config
-            network_metrics = self.config.get_metrics_by_category('network_io')
-            if not network_metrics:
-                return {
-                    'status': 'error',
-                    'error': 'No network_io metrics found in configuration'
-                }
             
             # Initialize mappings
             await self._update_node_mappings()
             
+            # Get network_io metrics from config
+            network_metrics = self.config.get_metrics_by_category('network_io')
+            if not network_metrics:
+                return {
+                    'status': 'error',
+                    'error': 'No network_io metrics found in configuration',
+                    'category': 'network_io',
+                    'timestamp': datetime.now(pytz.UTC).isoformat(),
+                    'duration': duration
+                }
+
+            # Partition metrics by level based on standardized names
+            pod_metric_names = set()
+            node_metric_names = set()
+            cluster_metric_names = set()
+
+            for m in network_metrics:
+                name = m.get('name', '')
+                if name.startswith('network_io_container_') or \
+                   name.startswith('network_io_network_peer_') or \
+                   name.startswith('network_io_network_client_') or \
+                   name == 'network_io_peer2peer_latency_p99':
+                    pod_metric_names.add(name)
+                elif name.startswith('network_io_node_network_'):
+                    node_metric_names.add(name)
+                elif name.startswith('network_io_grpc_active_'):
+                    cluster_metric_names.add(name)
+                else:
+                    # Fallback: place unknown ones into cluster level
+                    cluster_metric_names.add(name)
+
+            # Build dictionaries {name: {expr, unit, title}}
+            def to_dict(names_set):
+                d = {}
+                for m in network_metrics:
+                    if m.get('name') in names_set:
+                        d[m['name']] = {
+                            'expr': m.get('expr', ''),
+                            'unit': m.get('unit', 'unknown'),
+                            'title': m.get('title', m.get('name'))
+                        }
+                return d
+
+            pod_metrics = to_dict(pod_metric_names)
+            node_metrics = to_dict(node_metric_names)
+            cluster_metrics = to_dict(cluster_metric_names)
+            
             results = {
                 'status': 'success',
-                'collection_time': datetime.now(pytz.UTC).isoformat(),
+                'timestamp': datetime.now(pytz.UTC).isoformat(),
                 'duration': duration,
-                'metrics': {},
-                'summary': {
-                    'total_metrics': len(network_metrics),
-                    'collected_metrics': 0,
-                    'failed_metrics': 0
-                }
+                'data': {
+                    'pods_metrics': {},
+                    # Backward compatibility alias (will be removed later)
+                    'container_metrics': {},
+                    'node_metrics': {},
+                    'cluster_metrics': {}
+                },
+                'category': 'network_io'
             }
             
             async with PrometheusBaseQuery(self.prometheus_config) as prom:
-                # Test connection first
+                # Test connection
                 connection_test = await prom.test_connection()
                 if connection_test['status'] != 'connected':
                     return {
                         'status': 'error',
-                        'error': f"Prometheus connection failed: {connection_test.get('error')}"
+                        'error': f"Prometheus connection failed: {connection_test.get('error')}",
+                        'category': 'network_io',
+                        'timestamp': datetime.now(pytz.UTC).isoformat(),
+                        'duration': duration
                     }
                 
-                # Collect each metric
-                for metric in network_metrics:
-                    metric_name = metric['name']
-                    try:
-                        self.logger.debug(f"Collecting metric: {metric_name}")
-                        
-                        # Route to appropriate collection method
-                        if metric_name == 'container_network_rx':
-                            metric_result = await self._collect_container_network_rx(prom, duration)
-                        elif metric_name == 'container_network_tx':
-                            metric_result = await self._collect_container_network_tx(prom, duration)
-                        elif metric_name == 'network_peer_round_trip_time_p99':
-                            metric_result = await self._collect_peer_round_trip_time(prom, duration)
-                        elif metric_name == 'network_peer_received_bytes':
-                            metric_result = await self._collect_peer_received_bytes(prom, duration)
-                        elif metric_name == 'network_peer_sent_bytes':
-                            metric_result = await self._collect_peer_sent_bytes(prom, duration)
-                        elif metric_name == 'network_client_grpc_received_bytes':
-                            metric_result = await self._collect_client_grpc_received(prom, duration)
-                        elif metric_name == 'network_client_grpc_sent_bytes':
-                            metric_result = await self._collect_client_grpc_sent(prom, duration)
-                        elif metric_name == 'snapshot_duration':
-                            metric_result = await self._collect_snapshot_duration(prom, duration)
-                        elif metric_name == 'node_network_rx_utilization':
-                            metric_result = await self._collect_node_network_rx(prom, duration)
-                        elif metric_name == 'node_network_tx_utilization':
-                            metric_result = await self._collect_node_network_tx(prom, duration)
-                        elif metric_name == 'node_network_rx_package':
-                            metric_result = await self._collect_node_network_rx_packets(prom, duration)
-                        elif metric_name == 'node_network_tx_package':
-                            metric_result = await self._collect_node_network_tx_packets(prom, duration)
-                        elif metric_name == 'node_network_rx_drop':
-                            metric_result = await self._collect_node_network_rx_drops(prom, duration)
-                        elif metric_name == 'node_network_tx_drop':
-                            metric_result = await self._collect_node_network_tx_drops(prom, duration)
-                        elif metric_name == 'grpc_active_watch_streams':
-                            metric_result = await self._collect_grpc_watch_streams(prom, duration)
-                        elif metric_name == 'grpc_active_lease_streams':
-                            metric_result = await self._collect_grpc_lease_streams(prom, duration)
-                        else:
-                            # Generic collection for any other metrics
-                            metric_result = await self._collect_generic_metric(prom, metric, duration)
-                        
-                        if metric_result['status'] == 'success':
-                            results['metrics'][metric_name] = metric_result
-                            results['summary']['collected_metrics'] += 1
-                        else:
-                            results['metrics'][metric_name] = metric_result
-                            results['summary']['failed_metrics'] += 1
-                            
-                    except Exception as e:
-                        self.logger.error(f"Error collecting metric {metric_name}: {e}")
-                        results['metrics'][metric_name] = {
-                            'status': 'error',
-                            'error': str(e)
-                        }
-                        results['summary']['failed_metrics'] += 1
+                # Collect pod metrics
+                pods_result = await self._collect_pod_metrics(prom, duration, pod_metrics)
+                # Prefer new key
+                results['data']['pods_metrics'] = pods_result
+                # Maintain old key for compatibility
+                results['data']['container_metrics'] = pods_result
+                
+                # Collect node metrics
+                node_result = await self._collect_node_metrics(prom, duration, node_metrics)
+                results['data']['node_metrics'] = node_result
+                
+                # Collect cluster metrics
+                cluster_result = await self._collect_cluster_metrics(prom, duration, cluster_metrics)
+                results['data']['cluster_metrics'] = cluster_result
             
-            self.logger.info(f"Network I/O collection completed. Success: {results['summary']['collected_metrics']}, Failed: {results['summary']['failed_metrics']}")
             return results
             
         except Exception as e:
@@ -131,50 +130,16 @@ class NetworkIOCollector:
             return {
                 'status': 'error',
                 'error': str(e),
-                'collection_time': datetime.now(pytz.UTC).isoformat()
-            }
-
-    async def collect_metrics(self, duration: str = "1h") -> Dict[str, Any]:
-        """Backward-compatible entrypoint expected by server; wraps collect_all_metrics into {status,data,...}."""
-        try:
-            result = await self.collect_all_metrics(duration)
-            if result.get('status') == 'success':
-                return {
-                    'status': 'success',
-                    'data': {
-                        'metrics': result.get('metrics', {}),
-                        'summary': result.get('summary', {})
-                    },
-                    'error': None,
-                    'timestamp': result.get('collection_time', datetime.now(pytz.UTC).isoformat()),
-                    'category': 'network_io',
-                    'duration': duration
-                }
-            else:
-                return {
-                    'status': result.get('status', 'error'),
-                    'data': None,
-                    'error': result.get('error'),
-                    'timestamp': result.get('collection_time', datetime.now(pytz.UTC).isoformat()),
-                    'category': 'network_io',
-                    'duration': duration
-                }
-        except Exception as e:
-            return {
-                'status': 'error',
-                'data': None,
-                'error': str(e),
                 'timestamp': datetime.now(pytz.UTC).isoformat(),
                 'category': 'network_io',
                 'duration': duration
             }
-    
+
     async def _update_node_mappings(self):
         """Update node and pod mappings"""
         try:
             self._node_mappings = {
                 'pod_to_node': await self.utility.get_pod_to_node_mapping(),
-                'node_exporter_to_node': await self.utility.get_node_exporter_to_node_mapping(),
                 'master_nodes': await self.utility.get_master_nodes()
             }
             self._cache_valid = True
@@ -182,384 +147,244 @@ class NetworkIOCollector:
         except Exception as e:
             self.logger.warning(f"Failed to update node mappings: {e}")
             self._cache_valid = False
-    
-    def _resolve_node_name(self, labels: Dict[str, str]) -> str:
-        """Resolve node name from metric labels"""
-        # Try different label keys for node identification
-        node_keys = ['node', 'instance', 'pod', 'kubernetes_node']
+
+    async def _collect_pod_metrics(self, prom: PrometheusBaseQuery, duration: str, pod_metrics: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """Collect pod level network metrics based on config-provided names and expressions"""
+        results = {}
         
-        for key in node_keys:
-            if key in labels:
-                value = labels[key]
+        for metric_name, mconf in pod_metrics.items():
+            query = mconf.get('expr', '')
+            try:
+                result = await prom.query_with_stats(query, duration)
                 
-                # If it's a pod name, resolve to node
-                if key == 'pod' and value in self._node_mappings.get('pod_to_node', {}):
-                    return self._node_mappings['pod_to_node'][value]
-                
-                # If it's a node-exporter instance, resolve to node
-                if 'node-exporter' in value and value in self._node_mappings.get('node_exporter_to_node', {}):
-                    return self._node_mappings['node_exporter_to_node'][value]
-                
-                # If it contains port info, strip it
-                if ':' in value:
-                    value = value.split(':')[0]
-                
-                return value
-        
-        return 'unknown'
-    
-    async def _collect_container_network_rx(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect container network receive bytes metrics"""
-        query = 'sum(rate(container_network_receive_bytes_total{ namespace=~"openshift-etcd.*"}[2m])) BY (namespace, pod)'
-        return await self._collect_pod_metric(prom, query, duration, 'bytes_per_second')
-    
-    async def _collect_container_network_tx(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect container network transmit bytes metrics"""
-        query = 'sum(rate(container_network_transmit_bytes_total{ namespace=~"openshift-etcd.*"}[2m])) BY (namespace, pod)'
-        return await self._collect_pod_metric(prom, query, duration, 'bytes_per_second')
-    
-    async def _collect_peer_round_trip_time(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect peer round trip time metrics"""
-        query = 'histogram_quantile(0.99, rate(etcd_network_peer_round_trip_time_seconds_bucket{namespace="openshift-etcd",pod=~".*"}[2m]))'
-        return await self._collect_pod_metric(prom, query, duration, 'seconds')
-    
-    async def _collect_peer_received_bytes(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect peer received bytes metrics"""
-        query = 'rate(etcd_network_peer_received_bytes_total{namespace="openshift-etcd",pod=~".*"}[2m])'
-        return await self._collect_pod_metric(prom, query, duration, 'bytes_per_second')
-    
-    async def _collect_peer_sent_bytes(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect peer sent bytes metrics"""
-        query = 'rate(etcd_network_peer_sent_bytes_total{namespace="openshift-etcd",pod=~".*"}[2m])'
-        return await self._collect_pod_metric(prom, query, duration, 'bytes_per_second')
-    
-    async def _collect_client_grpc_received(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect client gRPC received bytes metrics"""
-        query = 'rate(etcd_network_client_grpc_received_bytes_total{namespace="openshift-etcd",pod=~".*"}[2m])'
-        return await self._collect_pod_metric(prom, query, duration, 'bytes_per_second')
-    
-    async def _collect_client_grpc_sent(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect client gRPC sent bytes metrics"""
-        query = 'rate(etcd_network_client_grpc_sent_bytes_total{namespace="openshift-etcd",pod=~".*"}[2m])'
-        return await self._collect_pod_metric(prom, query, duration, 'bytes_per_second')
-    
-    async def _collect_snapshot_duration(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect snapshot duration metrics"""
-        query = 'sum(rate(etcd_debugging_snap_save_total_duration_seconds_sum{namespace="openshift-etcd"}[2m]))'
-        return await self._collect_cluster_metric(prom, query, duration, 'seconds')
-    
-    async def _collect_node_network_rx(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect node network receive utilization metrics"""
-        query = 'rate(node_network_receive_bytes_total{instance=~".*",device=~".*"}[2m]) * 8'
-        return await self._collect_node_metric(prom, query, duration, 'bits_per_second')
-    
-    async def _collect_node_network_tx(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect node network transmit utilization metrics"""
-        query = 'rate(node_network_transmit_bytes_total{instance=~".*",device=~".*"}[5m]) * 8'
-        return await self._collect_node_metric(prom, query, duration, 'bits_per_second')
-    
-    async def _collect_node_network_rx_packets(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect node network receive packets metrics"""
-        query = 'rate(node_network_receive_packets_total{instance=~".*",device=~".*"}[5m])'
-        return await self._collect_node_metric(prom, query, duration, 'packets_per_second')
-    
-    async def _collect_node_network_tx_packets(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect node network transmit packets metrics"""
-        query = 'rate(node_network_transmit_packets_total{instance=~".*",device=~".*"}[5m])'
-        return await self._collect_node_metric(prom, query, duration, 'packets_per_second')
-    
-    async def _collect_node_network_rx_drops(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect node network receive drops metrics"""
-        query = 'topk(10, rate(node_network_receive_drop_total{instance=~".*"}[5m]))'
-        return await self._collect_node_metric(prom, query, duration, 'packets_per_second')
-    
-    async def _collect_node_network_tx_drops(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect node network transmit drops metrics"""
-        query = 'topk(10,rate(node_network_transmit_drop_total{instance=~".*"}[5m]))'
-        return await self._collect_node_metric(prom, query, duration, 'packets_per_second')
-    
-    async def _collect_grpc_watch_streams(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect active gRPC watch streams metrics"""
-        query = 'sum(grpc_server_started_total{namespace="openshift-etcd",grpc_service="etcdserverpb.Watch",grpc_type="bidi_stream"}) - sum(grpc_server_handled_total{namespace="openshift-etcd",grpc_service="etcdserverpb.Watch",grpc_type="bidi_stream"})'
-        return await self._collect_cluster_metric(prom, query, duration, 'count')
-    
-    async def _collect_grpc_lease_streams(self, prom: PrometheusBaseQuery, duration: str) -> Dict[str, Any]:
-        """Collect active gRPC lease streams metrics"""
-        query = 'sum(grpc_server_started_total{namespace="openshift-etcd",grpc_service="etcdserverpb.Lease",grpc_type="bidi_stream"}) - sum(grpc_server_handled_total{namespace="openshift-etcd",grpc_service="etcdserverpb.Lease",grpc_type="bidi_stream"})'
-        return await self._collect_cluster_metric(prom, query, duration, 'count')
-    
-    async def _collect_pod_metric(self, prom: PrometheusBaseQuery, query: str, duration: str, unit: str) -> Dict[str, Any]:
-        """Collect metric with pod-level granularity"""
-        try:
-            result = await prom.query_with_stats(query, duration)
-            
-            if result['status'] != 'success':
-                return {
-                    'status': 'error',
-                    'error': result.get('error', 'Query failed'),
-                    'query': query
-                }
-            
-            pod_stats = {}
-            node_stats = {}
-            
-            # Process each series
-            for series in result.get('series_data', []):
-                labels = series['labels']
-                stats = series['statistics']
-                
-                # Get pod name
-                pod_name = labels.get('pod', 'unknown')
-                
-                # Resolve node name
-                node_name = self._resolve_node_name(labels)
-                
-                # Store pod-level stats
-                pod_stats[pod_name] = {
-                    'avg': stats.get('avg'),
-                    'max': stats.get('max'),
-                    'node': node_name,
-                    'unit': unit
-                }
-                
-                # Aggregate node-level stats
-                if node_name not in node_stats:
-                    node_stats[node_name] = {
-                        'values': [],
-                        'pod_count': 0
-                    }
-                
-                if stats.get('avg') is not None:
-                    node_stats[node_name]['values'].append(stats['avg'])
-                node_stats[node_name]['pod_count'] += 1
-            
-            # Calculate node aggregates
-            for node_name in node_stats:
-                values = node_stats[node_name]['values']
-                if values:
-                    node_stats[node_name] = {
-                        'avg': sum(values) / len(values),
-                        'max': max(values),
-                        'pod_count': node_stats[node_name]['pod_count'],
-                        'unit': unit
+                if result['status'] == 'success':
+                    pod_stats = {}
+                    
+                    # Process each series
+                    for series in result.get('series_data', []):
+                        labels = series['labels']
+                        stats = series['statistics']
+                        
+                        pod_name = labels.get('pod', 'unknown')
+                        node_name = self._resolve_node_name(pod_name)
+                        
+                        pod_stats[pod_name] = {
+                            'avg': stats.get('avg'),
+                            'max': stats.get('max'),
+                            'node': node_name
+                        }
+                    
+                    results[metric_name] = {
+                        'status': 'success',
+                        'pods': pod_stats,
+                        'unit': mconf.get('unit', 'unknown'),
+                        'title': mconf.get('title', metric_name),
+                        'query': query
                     }
                 else:
-                    node_stats[node_name] = {
-                        'avg': None,
-                        'max': None,
-                        'pod_count': node_stats[node_name]['pod_count'],
-                        'unit': unit
+                    results[metric_name] = {
+                        'status': 'error',
+                        'error': result.get('error', 'Query failed')
                     }
-            
-            return {
-                'status': 'success',
-                'query': query,
-                'unit': unit,
-                'overall_stats': result.get('overall_statistics', {}),
-                'by_pod': pod_stats,
-                'by_node': node_stats
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error collecting pod metric: {e}")
-            return {
-                'status': 'error',
-                'error': str(e),
-                'query': query
-            }
-    
-    async def _collect_node_metric(self, prom: PrometheusBaseQuery, query: str, duration: str, unit: str) -> Dict[str, Any]:
-        """Collect metric with node-level granularity"""
-        try:
-            result = await prom.query_with_stats(query, duration)
-            
-            if result['status'] != 'success':
-                return {
+                    
+            except Exception as e:
+                self.logger.error(f"Error collecting container metric {metric_name}: {e}")
+                results[metric_name] = {
                     'status': 'error',
-                    'error': result.get('error', 'Query failed'),
-                    'query': query
+                    'error': str(e)
                 }
-            
-            node_stats = {}
-            
-            # Process each series
-            for series in result.get('series_data', []):
-                labels = series['labels']
-                stats = series['statistics']
+        
+        return results
+
+    async def _collect_node_metrics(self, prom: PrometheusBaseQuery, duration: str, node_metrics: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """Collect node level network metrics based on config-provided names and expressions"""
+        results = {}
+        
+        for metric_name, mconf in node_metrics.items():
+            query = mconf.get('expr', '')
+            try:
+                result = await prom.query_with_stats(query, duration)
                 
-                # Resolve node name
-                node_name = self._resolve_node_name(labels)
-                device = labels.get('device', 'unknown')
-                
-                # Create unique key for node+device
-                key = f"{node_name}_{device}" if device != 'unknown' else node_name
-                
-                node_stats[key] = {
-                    'node': node_name,
-                    'device': device,
-                    'avg': stats.get('avg'),
-                    'max': stats.get('max'),
-                    'unit': unit
-                }
-            
-            # Aggregate by node (sum across devices)
-            node_aggregates = {}
-            for key, stats in node_stats.items():
-                node = stats['node']
-                if node not in node_aggregates:
-                    node_aggregates[node] = {
-                        'avg_values': [],
-                        'max_values': [],
-                        'devices': []
+                if result['status'] == 'success':
+                    node_stats = {}
+                    
+                    # Process each series and aggregate by node
+                    node_aggregates = {}
+                    for series in result.get('series_data', []):
+                        labels = series['labels']
+                        stats = series['statistics']
+                        
+                        # Resolve node name from instance
+                        node_name = self._resolve_instance_to_node(labels.get('instance', 'unknown'))
+                        
+                        # Only include master nodes
+                        if node_name not in self._node_mappings.get('master_nodes', []):
+                            continue
+                        
+                        if node_name not in node_aggregates:
+                            node_aggregates[node_name] = {
+                                'avg_values': [],
+                                'max_values': [],
+                                'devices': []
+                            }
+                        
+                        if stats.get('avg') is not None:
+                            node_aggregates[node_name]['avg_values'].append(stats['avg'])
+                        if stats.get('max') is not None:
+                            node_aggregates[node_name]['max_values'].append(stats['max'])
+                        
+                        device = labels.get('device', 'unknown')
+                        node_aggregates[node_name]['devices'].append(device)
+                    
+                    # Calculate final node stats
+                    for node_name, agg_data in node_aggregates.items():
+                        avg_values = agg_data['avg_values']
+                        max_values = agg_data['max_values']
+                        
+                        node_stats[node_name] = {
+                            'avg': sum(avg_values) if avg_values else None,
+                            'max': max(max_values) if max_values else None,
+                            'device_count': len(set(agg_data['devices']))
+                        }
+                    
+                    results[metric_name] = {
+                        'status': 'success',
+                        'nodes': node_stats,
+                        'unit': mconf.get('unit', 'unknown'),
+                        'title': mconf.get('title', metric_name),
+                        'query': query
                     }
-                
-                if stats['avg'] is not None:
-                    node_aggregates[node]['avg_values'].append(stats['avg'])
-                if stats['max'] is not None:
-                    node_aggregates[node]['max_values'].append(stats['max'])
-                node_aggregates[node]['devices'].append(stats['device'])
-            
-            # Calculate final aggregates
-            for node in node_aggregates:
-                avg_values = node_aggregates[node]['avg_values']
-                max_values = node_aggregates[node]['max_values']
-                
-                node_aggregates[node] = {
-                    'avg': sum(avg_values) if avg_values else None,
-                    'max': max(max_values) if max_values else None,
-                    'device_count': len(node_aggregates[node]['devices']),
-                    'unit': unit
-                }
-            
-            return {
-                'status': 'success',
-                'query': query,
-                'unit': unit,
-                'overall_stats': result.get('overall_statistics', {}),
-                'by_device': node_stats,
-                'by_node': node_aggregates
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error collecting node metric: {e}")
-            return {
-                'status': 'error',
-                'error': str(e),
-                'query': query
-            }
-    
-    async def _collect_cluster_metric(self, prom: PrometheusBaseQuery, query: str, duration: str, unit: str) -> Dict[str, Any]:
-        """Collect cluster-level metrics (like gRPC streams)"""
-        try:
-            result = await prom.query_with_stats(query, duration)
-            
-            if result['status'] != 'success':
-                return {
+                else:
+                    results[metric_name] = {
+                        'status': 'error',
+                        'error': result.get('error', 'Query failed')
+                    }
+                    
+            except Exception as e:
+                self.logger.error(f"Error collecting node metric {metric_name}: {e}")
+                results[metric_name] = {
                     'status': 'error',
-                    'error': result.get('error', 'Query failed'),
-                    'query': query
+                    'error': str(e)
                 }
-            
-            overall_stats = result.get('overall_statistics', {})
-            
-            return {
-                'status': 'success',
-                'query': query,
-                'unit': unit,
-                'cluster_stats': {
-                    'avg': overall_stats.get('avg'),
-                    'max': overall_stats.get('max'),
-                    'latest': overall_stats.get('latest'),
-                    'unit': unit
-                }
-            }
-            
-        except Exception as e:
-            self.logger.error(f"Error collecting cluster metric: {e}")
-            return {
-                'status': 'error',
-                'error': str(e),
-                'query': query
-            }
-    
-    async def _collect_generic_metric(self, prom: PrometheusBaseQuery, metric_config: Dict[str, Any], duration: str) -> Dict[str, Any]:
-        """Generic metric collection for any configured metric"""
-        try:
-            query = metric_config['expr']
-            unit = metric_config.get('unit', 'unknown')
-            
-            result = await prom.query_with_stats(query, duration)
-            
-            if result['status'] != 'success':
-                return {
+        
+        return results
+
+    async def _collect_cluster_metrics(self, prom: PrometheusBaseQuery, duration: str, cluster_metrics: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+        """Collect cluster level metrics based on config-provided names and expressions (e.g., gRPC streams)"""
+        results = {}
+        
+        for metric_name, mconf in cluster_metrics.items():
+            query = mconf.get('expr', '')
+            try:
+                result = await prom.query_with_stats(query, duration)
+                
+                if result['status'] == 'success':
+                    overall_stats = result.get('overall_statistics', {})
+                    
+                    results[metric_name] = {
+                        'status': 'success',
+                        'avg': overall_stats.get('avg'),
+                        'max': overall_stats.get('max'),
+                        'latest': overall_stats.get('latest'),
+                        'unit': mconf.get('unit', 'unknown'),
+                        'title': mconf.get('title', metric_name),
+                        'query': query
+                    }
+                else:
+                    results[metric_name] = {
+                        'status': 'error',
+                        'error': result.get('error', 'Query failed')
+                    }
+                    
+            except Exception as e:
+                self.logger.error(f"Error collecting cluster metric {metric_name}: {e}")
+                results[metric_name] = {
                     'status': 'error',
-                    'error': result.get('error', 'Query failed'),
-                    'query': query
+                    'error': str(e)
                 }
+        
+        return results
+
+    def _resolve_node_name(self, pod_name: str) -> str:
+        """Resolve node name from pod name"""
+        pod_to_node = self._node_mappings.get('pod_to_node', {})
+        return pod_to_node.get(pod_name, 'unknown')
+
+    def _resolve_instance_to_node(self, instance: str) -> str:
+        """Resolve node name from Prometheus instance label"""
+        try:
+            # Instance format can be: IP:port, hostname:port, or just hostname
+            if ':' in instance:
+                host_part = instance.split(':')[0]
+            else:
+                host_part = instance
             
-            return {
-                'status': 'success',
-                'query': query,
-                'unit': unit,
-                'overall_stats': result.get('overall_statistics', {}),
-                'series_count': result.get('series_count', 0)
-            }
+            # Check if it's an IP address
+            if self._is_ip_address(host_part):
+                # For IP addresses, we need to map to node names
+                # This would require additional logic to map IPs to nodes
+                # For now, return the IP as is
+                return host_part
+            
+            # If it's a hostname, check if it matches any master node
+            master_nodes = self._node_mappings.get('master_nodes', [])
+            for node in master_nodes:
+                if host_part in node or node in host_part:
+                    return node
+            
+            return host_part
             
         except Exception as e:
-            self.logger.error(f"Error collecting generic metric: {e}")
-            return {
-                'status': 'error',
-                'error': str(e),
-                'query': metric_config.get('expr', 'unknown')
-            }
-    
+            self.logger.warning(f"Error resolving instance {instance} to node: {e}")
+            return instance
+
+    def _is_ip_address(self, address: str) -> bool:
+        """Check if a string is an IP address"""
+        try:
+            import ipaddress
+            ipaddress.ip_address(address)
+            return True
+        except ValueError:
+            return False
+
     async def get_network_summary(self, duration: str = "1h") -> Dict[str, Any]:
         """Get network I/O summary across all metrics"""
         try:
-            full_results = await self.collect_all_metrics(duration)
+            full_results = await self.collect_metrics(duration)
             
             if full_results['status'] != 'success':
                 return full_results
             
+            data = full_results.get('data', {})
+            
             summary = {
                 'status': 'success',
-                'collection_time': full_results['collection_time'],
+                'timestamp': full_results['timestamp'],
                 'duration': duration,
                 'network_health': 'healthy',
-                'key_metrics': {},
-                'node_summary': {},
+                'summary': {
+                    'container_metrics_count': len([m for m in data.get('pods_metrics', data.get('container_metrics', {})).values() if m.get('status') == 'success']),
+                    'node_metrics_count': len([m for m in data.get('node_metrics', {}).values() if m.get('status') == 'success']),
+                    'cluster_metrics_count': len([m for m in data.get('cluster_metrics', {}).values() if m.get('status') == 'success']),
+                    'total_etcd_pods': len(self._node_mappings.get('pod_to_node', {})),
+                    'total_master_nodes': len(self._node_mappings.get('master_nodes', []))
+                },
                 'alerts': []
             }
             
-            # Extract key metrics
-            metrics = full_results.get('metrics', {})
-            
-            # Container network metrics
-            if 'container_network_rx' in metrics and metrics['container_network_rx']['status'] == 'success':
-                summary['key_metrics']['container_rx_bytes_per_sec'] = metrics['container_network_rx']['overall_stats']
-            
-            if 'container_network_tx' in metrics and metrics['container_network_tx']['status'] == 'success':
-                summary['key_metrics']['container_tx_bytes_per_sec'] = metrics['container_network_tx']['overall_stats']
-            
-            # Peer metrics
-            if 'network_peer_round_trip_time_p99' in metrics and metrics['network_peer_round_trip_time_p99']['status'] == 'success':
-                rtt_stats = metrics['network_peer_round_trip_time_p99']['overall_stats']
-                summary['key_metrics']['peer_rtt_p99_seconds'] = rtt_stats
-                
-                # Alert on high RTT
-                if rtt_stats.get('avg', 0) > 0.1:  # 100ms threshold
-                    summary['alerts'].append({
-                        'level': 'warning',
-                        'metric': 'peer_round_trip_time',
-                        'message': f'High peer RTT detected: {rtt_stats["avg"]:.3f}s avg'
-                    })
-            
-            # gRPC streams
-            if 'grpc_active_watch_streams' in metrics and metrics['grpc_active_watch_streams']['status'] == 'success':
-                summary['key_metrics']['active_watch_streams'] = metrics['grpc_active_watch_streams']['cluster_stats']
-            
-            if 'grpc_active_lease_streams' in metrics and metrics['grpc_active_lease_streams']['status'] == 'success':
-                summary['key_metrics']['active_lease_streams'] = metrics['grpc_active_lease_streams']['cluster_stats']
+            # Check for high peer latency
+            container_metrics = data.get('pods_metrics', data.get('container_metrics', {}))
+            if 'peer2peer_latency_p99' in container_metrics:
+                latency_data = container_metrics['peer2peer_latency_p99']
+                if latency_data.get('status') == 'success':
+                    for pod_name, pod_data in latency_data.get('pods', {}).items():
+                        avg_latency = pod_data.get('avg', 0)
+                        if avg_latency and avg_latency > 0.1:  # 100ms threshold
+                            summary['alerts'].append({
+                                'level': 'warning',
+                                'metric': 'peer_latency',
+                                'message': f'High peer latency on pod {pod_name}: {avg_latency:.3f}s'
+                            })
             
             # Set health status based on alerts
             if summary['alerts']:
@@ -571,5 +396,6 @@ class NetworkIOCollector:
             self.logger.error(f"Error generating network summary: {e}")
             return {
                 'status': 'error',
-                'error': str(e)
+                'error': str(e),
+                'timestamp': datetime.now(pytz.UTC).isoformat()
             }

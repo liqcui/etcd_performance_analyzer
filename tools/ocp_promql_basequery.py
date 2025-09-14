@@ -5,12 +5,14 @@ Provides base functionality for querying Prometheus metrics
 
 import asyncio
 import aiohttp
+import ssl
 import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Any, Optional, Union
 import json
 from urllib.parse import urlencode
 import pytz
+import os
 
 
 class PrometheusBaseQuery:
@@ -28,14 +30,45 @@ class PrometheusBaseQuery:
         
         # Log configuration for debugging
         self.logger.info(f"Prometheus config - URL: {self.base_url}, SSL verify: {self.verify_ssl}")
+        self.logger.debug(f"Headers: {list(self.headers.keys())}")
+    
+    def _create_ssl_context(self) -> Union[ssl.SSLContext, bool, None]:
+        """Create proper SSL context for aiohttp"""
+        if isinstance(self.verify_ssl, bool):
+            return self.verify_ssl
+        elif isinstance(self.verify_ssl, str) and self.verify_ssl:
+            # It's a file path to CA certificate
+            if os.path.isfile(self.verify_ssl):
+                try:
+                    # Create SSL context and load CA file
+                    ssl_context = ssl.create_default_context()
+                    ssl_context.load_verify_locations(cafile=self.verify_ssl)
+                    self.logger.debug(f"Loaded CA certificate from: {self.verify_ssl}")
+                    return ssl_context
+                except Exception as e:
+                    self.logger.warning(f"Failed to load CA file at {self.verify_ssl}: {e}")
+                    # For OpenShift with self-signed certs, often we need to disable verification
+                    self.logger.info("Falling back to SSL verification disabled")
+                    return False
+            else:
+                self.logger.warning(f"CA file not found at {self.verify_ssl}, disabling SSL verification")
+                return False
+        else:
+            # Default to no SSL verification for OpenShift internal communication
+            return False
     
     async def __aenter__(self):
         """Async context manager entry"""
-        connector = aiohttp.TCPConnector(ssl=self.verify_ssl)
+        ssl_context = self._create_ssl_context()
+        
+        # Create connector with proper SSL context
+        connector = aiohttp.TCPConnector(ssl=ssl_context)
+        
+        # Create session with headers and increased timeout
         self.session = aiohttp.ClientSession(
             headers=self.headers,
             connector=connector,
-            timeout=aiohttp.ClientTimeout(total=60)  # Increased timeout
+            timeout=aiohttp.ClientTimeout(total=60)
         )
         return self
     
@@ -91,10 +124,16 @@ class PrometheusBaseQuery:
         url = f"{self.base_url}/api/v1/query"
         
         self.logger.debug(f"Executing instant query: {query}")
+        self.logger.debug(f"Request URL: {url}")
         
         try:
             async with self.session.get(url, params=params) as response:
                 response_text = await response.text()
+                
+                # Log response details for debugging
+                self.logger.debug(f"Response status: {response.status}")
+                if response.status != 200:
+                    self.logger.debug(f"Response headers: {dict(response.headers)}")
                 
                 if response.status == 200:
                     try:
@@ -110,11 +149,28 @@ class PrometheusBaseQuery:
                         }
                     except json.JSONDecodeError as e:
                         self.logger.error(f"Failed to parse JSON response: {e}")
+                        self.logger.debug(f"Response text: {response_text[:500]}")
                         return {
                             'status': 'error',
                             'error': f"Invalid JSON response: {e}",
                             'query': query
                         }
+                elif response.status == 401:
+                    self.logger.error("Authentication failed - invalid or missing token")
+                    return {
+                        'status': 'error',
+                        'error': "Authentication failed: Invalid or missing authorization token",
+                        'query': query,
+                        'response_status': response.status
+                    }
+                elif response.status == 403:
+                    self.logger.error("Authorization failed - insufficient permissions")
+                    return {
+                        'status': 'error',
+                        'error': "Authorization failed: Insufficient permissions to access Prometheus",
+                        'query': query,
+                        'response_status': response.status
+                    }
                 else:
                     self.logger.error(f"Prometheus query failed: {response.status} - {response_text}")
                     return {
@@ -125,11 +181,42 @@ class PrometheusBaseQuery:
                     }
         except aiohttp.ClientError as e:
             self.logger.error(f"HTTP client error executing instant query: {e}")
-            return {
-                'status': 'error',
-                'error': f"HTTP client error: {str(e)}",
-                'query': query
-            }
+            # One-time SSL-disabled fallback (useful for self-signed routes)
+            try:
+                fallback_connector = aiohttp.TCPConnector(ssl=False)
+                async with aiohttp.ClientSession(
+                    headers=self.headers,
+                    connector=fallback_connector,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    trust_env=True,
+                ) as fallback_session:
+                    async with fallback_session.get(url, params=params) as response:
+                        response_text = await response.text()
+                        if response.status == 200:
+                            try:
+                                data = json.loads(response_text)
+                                return {
+                                    'status': 'success',
+                                    'data': data.get('data', {}),
+                                    'query': query,
+                                    'timestamp': time or datetime.now(self.timezone),
+                                    'note': 'ssl_disabled_fallback'
+                                }
+                            except json.JSONDecodeError:
+                                pass
+                        return {
+                            'status': 'error',
+                            'error': f"HTTP {response.status}: {response_text}",
+                            'query': query,
+                            'response_status': response.status,
+                            'note': 'ssl_disabled_fallback'
+                        }
+            except Exception as fe:
+                return {
+                    'status': 'error',
+                    'error': f"HTTP client error: {str(e)}; fallback failed: {fe}",
+                    'query': query
+                }
         except Exception as e:
             self.logger.error(f"Unexpected error executing instant query: {e}")
             return {
@@ -180,6 +267,14 @@ class PrometheusBaseQuery:
                             'error': f"Invalid JSON response: {e}",
                             'query': query
                         }
+                elif response.status == 401:
+                    self.logger.error("Authentication failed - invalid or missing token")
+                    return {
+                        'status': 'error',
+                        'error': "Authentication failed: Invalid or missing authorization token",
+                        'query': query,
+                        'response_status': response.status
+                    }
                 else:
                     self.logger.error(f"Prometheus range query failed: {response.status} - {response_text}")
                     return {
@@ -190,11 +285,44 @@ class PrometheusBaseQuery:
                     }
         except aiohttp.ClientError as e:
             self.logger.error(f"HTTP client error executing range query: {e}")
-            return {
-                'status': 'error',
-                'error': f"HTTP client error: {str(e)}",
-                'query': query
-            }
+            # One-time SSL-disabled fallback
+            try:
+                fallback_connector = aiohttp.TCPConnector(ssl=False)
+                async with aiohttp.ClientSession(
+                    headers=self.headers,
+                    connector=fallback_connector,
+                    timeout=aiohttp.ClientTimeout(total=60),
+                    trust_env=True,
+                ) as fallback_session:
+                    async with fallback_session.get(url, params=params) as response:
+                        response_text = await response.text()
+                        if response.status == 200:
+                            try:
+                                data = json.loads(response_text)
+                                return {
+                                    'status': 'success',
+                                    'data': data.get('data', {}),
+                                    'query': query,
+                                    'start': start,
+                                    'end': end,
+                                    'step': step,
+                                    'note': 'ssl_disabled_fallback'
+                                }
+                            except json.JSONDecodeError:
+                                pass
+                        return {
+                            'status': 'error',
+                            'error': f"HTTP {response.status}: {response_text}",
+                            'query': query,
+                            'response_status': response.status,
+                            'note': 'ssl_disabled_fallback'
+                        }
+            except Exception as fe:
+                return {
+                    'status': 'error',
+                    'error': f"HTTP client error: {str(e)}; fallback failed: {fe}",
+                    'query': query
+                }
         except Exception as e:
             self.logger.error(f"Unexpected error executing range query: {e}")
             return {
@@ -358,10 +486,28 @@ class PrometheusBaseQuery:
                     'targets_up': targets_up
                 }
             else:
+                # Handle auth errors gracefully with guidance
+                resp_code = result.get('response_status')
+                if resp_code in (401, 403):
+                    msg = "Authentication failed" if resp_code == 401 else "Authorization failed"
+                    hint = (
+                        "Ensure your token has permissions to query Prometheus. For OpenShift, grant 'cluster-monitoring-view' "
+                        "or appropriate RBAC to your user/service account, or supply a valid token via kubeconfig."
+                    )
+                    self.logger.warning(f"{msg} - insufficient permissions")
+                    return {
+                        'status': 'auth_failed',
+                        'error': result.get('error', msg),
+                        'code': resp_code,
+                        'hint': hint,
+                        'prometheus_url': self.base_url
+                    }
                 self.logger.error(f"Prometheus connection test failed: {result.get('error')}")
                 return {
                     'status': 'connection_failed',
-                    'error': result.get('error', 'Unknown error')
+                    'error': result.get('error', 'Unknown error'),
+                    'response_status': resp_code,
+                    'prometheus_url': self.base_url
                 }
         except Exception as e:
             self.logger.error(f"Error testing Prometheus connection: {e}")
@@ -437,6 +583,9 @@ class PrometheusBaseQuery:
             'query': query,
             'duration': duration,
             'timestamp': datetime.now(self.timezone).isoformat(),
+            'prometheus_url': self.base_url,
+            'auth_configured': bool(self.headers.get('Authorization')),
+            'ssl_config': str(type(self.verify_ssl).__name__) + ': ' + str(self.verify_ssl),
             'steps': {}
         }
         

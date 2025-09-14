@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenShift OVN-K Benchmark MCP - AI Chat Interface</title>
+    <title>OpenShift ETCD Analyzer MCP - AI Chat Interface</title>
     <style>
         * {
             margin: 0;
@@ -234,6 +234,35 @@
             color: #2c3e50;
             align-self: flex-start;
             border: 1px solid #e9ecef;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+            line-height: 1.6;
+        }
+
+        .message.ai strong {
+            color: #2c3e50;
+        }
+
+        .message.ai em {
+            color: #7f8c8d;
+        }
+
+        .message.ai.streaming::after {
+            content: '▊';
+            animation: blink 1s infinite;
+            color: #3498db;
+        }
+
+        @keyframes blink {
+
+            0%,
+            50% {
+                opacity: 1;
+            }
+
+            51%,
+            100% {
+                opacity: 0;
+            }
         }
 
         .message.system {
@@ -250,6 +279,38 @@
             color: #721c24;
             align-self: center;
             border: 1px solid #f5c6cb;
+        }
+
+        .message table.response-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 12px;
+            background: white;
+            border-radius: 6px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+
+        .message table.response-table th,
+        .message table.response-table td {
+            padding: 8px 12px;
+            text-align: left;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .message table.response-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .message table.response-table tr:nth-child(even) {
+            background: #f8f9fa;
+        }
+
+        .message table.response-table tr:hover {
+            background: #e9ecef;
         }
 
         .typing-indicator {
@@ -463,6 +524,84 @@
             color: white;
         }
 
+        /* Modal styles */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .modal-header h3 {
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #999;
+            padding: 0;
+            width: 30px;
+            height: 30px;
+        }
+
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .modal-body label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .modal-body textarea {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e9ecef;
+            border-radius: 6px;
+            font-family: 'Courier New', monospace;
+            font-size: 13px;
+            resize: vertical;
+            min-height: 150px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            justify-content: flex-end;
+        }
+
         @media (max-width: 768px) {
             .container {
                 flex-direction: column;
@@ -510,51 +649,50 @@
     <div class="container">
         <div class="sidebar">
             <div class="sidebar-header">
-                <h1>OCP OVN-K Benchmark</h1>
+                <h1>OCP ETCD Analyzer</h1>
                 <p>AI-Powered Performance Analysis</p>
             </div>
 
             <div class="quick-actions">
                 <h3>Quick Actions</h3>
-                <button class="action-button" onclick="sendQuickMessage('Tell me the current cluster information?')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Tell me the current cluster information and cluster status and analysis/summary readable')">
                     🏛️ Cluster Overview
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Perform comprehensive general cluster status check and health assessment')">
-                    🔍 Cluster Status Check
+                    onclick="sendQuickMessage('Show me etcd General Information and analysis/summary readable')">
+                    🖥️ Etcd General Info
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Show me current cluster node usage')">
-                    🖥️ Etcd Cluster Status
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Show me OVN-K pod resource usage')">
-                    🌐 Etcd Disk IO
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVS performance metrics')">
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd network IO usage and analysis/summary readable')">
                     🌐 Etcd Network IO
                 </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze Multus CNI performance')">
-                    🌐 Etcd General Info
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
-                    🌐 Etcd Wal Fsync
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
-                    🌐 Etcd Backend Commit
-                </button>
-                <button class="action-button" onclick="sendQuickMessage('Check and Analyze OVN-K latency performance')">
-                    🌐 Etcd Compact Defrag
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me the etcd disk IO usage and analysis/summary readable')">
+                    💾 Etcd Disk IO
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Check and Analyze API server performance metrics')">
-                    ⚡ ETCD Performance
+                    onclick="sendQuickMessage('Show me the etcd wal fsync  and analysis/summary readable')">
+                    🔄 Etcd Wal Fsync
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Show me OVN-K components deep drive analysis')">
-                    🔀 ETCD Deep Dive
+                    onclick="sendQuickMessage('Show me the etcd backend commit usage  and analysis/summary readable')">
+                    🔗 Etcd Backend Commit
                 </button>
                 <button class="action-button"
-                    onclick="sendQuickMessage('Run overall OCP Cluster Performane analysis, include API perormance')">
-                    📈 Full Performance Report
+                    onclick="sendQuickMessage('Show me the etcd compact and defrag usage  and analysis/summary readable')">
+                    🗜️ Etcd Compact Defrag
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Show me etcd deep drive analysis and find bottleneck and make it readable')">
+                    🔍 ETCD Deep Dive
+                </button>
+                <button class="action-button"
+                    onclick="sendQuickMessage('Generate comprehensive etcd performance analysis report with detailed metrics evaluation and recommendations')">
+                    📊 Full Performance Report
+                </button>
+                <button class="action-button" onclick="toggleSystemPromptModal()">
+                    ⚙️ Configure AI Behavior
                 </button>
             </div>
 
@@ -582,7 +720,7 @@
             <div class="chat-container">
                 <div class="messages" id="messages">
                     <div class="welcome-message">
-                        <h3>Welcome to OpenShift OVN-K Benchmark AI Assistant</h3>
+                        <h3>Welcome to OpenShift ETCD Analyzer AI Assistant</h3>
                         <p>I can help you analyze your OpenShift cluster performance, check system health,
                             and provide insights about your infrastructure using advanced AI and comprehensive
                             monitoring tools.</p>
@@ -628,8 +766,41 @@
         <div id="tables"></div>
     </div>
 
+    <!-- System Prompt Modal -->
+    <div class="modal-overlay" id="systemPromptModal" style="display: none;">
+        <div class="modal">
+            <div class="modal-header">
+                <h3>Configure AI System Prompt</h3>
+                <button class="modal-close" onclick="toggleSystemPromptModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <label for="systemPromptInput">System Prompt:</label>
+                <textarea id="systemPromptInput" rows="8"
+                    placeholder="Enter custom system prompt to modify AI behavior..."></textarea>
+                <div class="modal-actions">
+                    <button class="btn btn-secondary" onclick="loadCurrentSystemPrompt()">Load Current</button>
+                    <button class="btn btn-secondary" onclick="resetSystemPrompt()">Reset to Default</button>
+                    <button class="btn btn-primary" onclick="saveSystemPrompt()">Apply</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         // Global application state
+        function decodeUnicodeEscapes(text) {
+            try {
+                if (!text || typeof text !== 'string') return text;
+                // Convert \uXXXX to actual characters (handles sequences like \u2705\u2022)
+                text = text.replace(/\\u([0-9a-fA-F]{4})/g, (m, g1) => {
+                    try { return String.fromCharCode(parseInt(g1, 16)); } catch { return m; }
+                });
+                return text;
+            } catch (e) {
+                return text;
+            }
+        }
+
         class ChatApplication {
             constructor() {
                 this.conversationId = 'web-' + Math.random().toString(36).substr(2, 9);
@@ -763,6 +934,8 @@
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let aiMessageDiv = null;
+                let toolResults = []; // Store tool results separately
+                let aiContent = ''; // Store AI analysis content
 
                 try {
                     while (true) {
@@ -782,16 +955,68 @@
                                         if (!aiMessageDiv) {
                                             this.showTyping(false);
                                             aiMessageDiv = this.addMessage('', 'ai');
+                                            aiMessageDiv.classList.add('streaming');
                                         }
 
-                                        // Convert markdown-style formatting to HTML
-                                        let content = data.content;
-                                        content = content.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
-                                        content = content.replace(/\*(.*?)\*/g, '<em>$1</em>');
-                                        content = content.replace(/\n/g, '<br>');
+                                        // Handle tool results differently from AI analysis
+                                        if (data.tool_result) {
+                                            // This is a tool result - add to tool results array
+                                            let toolContent = data.content;
+                                            toolContent = decodeUnicodeEscapes(toolContent);
+                                            toolResults.push(toolContent);
+                                        } else {
+                                            // This is AI analysis content
+                                            let newContent = data.content;
+                                            newContent = decodeUnicodeEscapes(newContent);
 
-                                        aiMessageDiv.innerHTML += content;
+                                            // For streaming AI content, accumulate it
+                                            if (data.streaming) {
+                                                aiContent = newContent; // Replace with latest complete content
+                                            } else {
+                                                aiContent += newContent; // Append if not streaming
+                                            }
+                                        }
+
+                                        // Combine tool results and AI content for display
+                                        let displayContent = '';
+                                        
+                                        // Add all tool results first
+                                        if (toolResults.length > 0) {
+                                            displayContent += toolResults.join('\n\n');
+                                        }
+                                        
+                                        // Add AI analysis content if available
+                                        if (aiContent.trim()) {
+                                            if (displayContent) {
+                                                displayContent += '\n\n---\n\n'; // Separator between tools and analysis
+                                            }
+                                            
+                                            // Convert markdown-style formatting to HTML
+                                            let formattedAiContent = aiContent;
+                                            formattedAiContent = formattedAiContent.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+                                            formattedAiContent = formattedAiContent.replace(/\*(.*?)\*/g, '<em>$1</em>');
+                                            formattedAiContent = formattedAiContent.replace(/\n/g, '<br>');
+                                            
+                                            displayContent += formattedAiContent;
+                                        }
+
+                                        // Handle HTML tables in the combined content
+                                        if (displayContent.includes('<table')) {
+                                            displayContent = displayContent.replace(/<table/g, '<table class="response-table"');
+                                        }
+
+                                        aiMessageDiv.innerHTML = displayContent;
                                         this.scrollToBottom();
+
+                                    } else if (data.type === 'message_complete') {
+                                        if (aiMessageDiv) {
+                                            aiMessageDiv.classList.remove('streaming');
+                                        }
+
+                                    } else if (data.type === 'stream_end') {
+                                        if (aiMessageDiv) {
+                                            aiMessageDiv.classList.remove('streaming');
+                                        }
 
                                     } else if (data.type === 'table') {
                                         this.displayTable(data.content, data.metadata);
@@ -808,6 +1033,9 @@
                     }
                 } finally {
                     this.showTyping(false);
+                    // Clear temporary storage for next message
+                    toolResults = [];
+                    aiContent = '';
                 }
             }
 
@@ -841,10 +1069,11 @@
             }
 
             displayTable(tableHtml, metadata) {
+                const decodedHtml = decodeUnicodeEscapes(tableHtml);
                 this.tablesDiv.innerHTML += `
                     <div class="table-wrapper">
                         <h4>${metadata?.title || 'Data Table'}</h4>
-                        ${tableHtml}
+                        ${decodedHtml}
                     </div>
                 `;
                 this.tablesContainer.style.display = 'block';
@@ -917,7 +1146,7 @@
 
             async checkClusterHealth(showLoading = true) {
                 try {
-                    const clusterResponse = await fetch('/api/cluster/health', {
+                    const clusterResponse = await fetch('/api/etcd/health', {
                         method: 'GET',
                         headers: {
                             'Accept': 'application/json',
@@ -939,20 +1168,26 @@
                     const clusterHealth = await clusterResponse.json();
                     console.log('Cluster health response:', clusterHealth);
 
-                    // Look for cluster health in the details object
+                    // Parse the response based on the actual structure
+                    const overallStatus = clusterHealth.status || 'unknown';
                     const healthDetails = clusterHealth.details || {};
-                    const overallStatus = healthDetails.overall_cluster_health ||
-                        healthDetails.health_details?.overall_cluster_health ||
-                        'unknown';
+                    const detailsStatus = healthDetails.overall_health || healthDetails.status || 'unknown';
+                    const collectorsInitialized = healthDetails.collectors_initialized || false;
+                    const toolsAvailable = healthDetails.tools_available || 0;
 
-                    console.log('Overall status:', overallStatus);
+                    console.log('Overall status:', overallStatus, 'Details status:', detailsStatus);
 
-                    if (overallStatus === 'healthy') {
-                        this.updateClusterStatus('connected', `Cluster ${overallStatus.charAt(0).toUpperCase()}${overallStatus.slice(1).toLowerCase()}`);
-                    } else if (overallStatus === 'unknown') {
+                    // Use the most specific status available
+                    const finalStatus = detailsStatus !== 'unknown' ? detailsStatus : overallStatus;
+
+                    if (finalStatus === 'healthy' && collectorsInitialized) {
+                        this.updateClusterStatus('connected', `Cluster Healthy (${toolsAvailable} tools)`);
+                    } else if (finalStatus === 'healthy') {
+                        this.updateClusterStatus('connected', 'Cluster Healthy');
+                    } else if (finalStatus === 'unknown') {
                         this.updateClusterStatus('checking', 'Cluster Status Unknown');
                     } else {
-                        this.updateClusterStatus('disconnected', 'Cluster Issues Detected');
+                        this.updateClusterStatus('disconnected', `Cluster ${finalStatus}`);
                     }
                 } catch (e) {
                     console.error('Cluster health check failed:', e);
@@ -968,6 +1203,75 @@
             updateClusterStatus(status, text) {
                 this.clusterStatus.className = `status-dot ${status}`;
                 this.clusterStatusText.textContent = text;
+            }
+        }
+
+        // System prompt management functions
+        async function toggleSystemPromptModal() {
+            const modal = document.getElementById('systemPromptModal');
+            if (modal.style.display === 'none' || !modal.style.display) {
+                modal.style.display = 'flex';
+                await loadCurrentSystemPrompt();
+            } else {
+                modal.style.display = 'none';
+            }
+        }
+
+        async function loadCurrentSystemPrompt() {
+            try {
+                const response = await fetch(`/api/system-prompt/${chatApp.conversationId}`);
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('systemPromptInput').value = data.system_prompt;
+                }
+            } catch (error) {
+                console.error('Failed to load system prompt:', error);
+            }
+        }
+
+        async function saveSystemPrompt() {
+            const systemPrompt = document.getElementById('systemPromptInput').value.trim();
+            if (!systemPrompt) {
+                alert('Please enter a system prompt');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/system-prompt', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        system_prompt: systemPrompt,
+                        conversation_id: chatApp.conversationId
+                    })
+                });
+
+                if (response.ok) {
+                    chatApp.addMessage('✅ AI behavior updated successfully', 'system');
+                    toggleSystemPromptModal();
+                } else {
+                    throw new Error('Failed to save system prompt');
+                }
+            } catch (error) {
+                alert('Failed to save system prompt: ' + error.message);
+            }
+        }
+
+        async function resetSystemPrompt() {
+            try {
+                const response = await fetch(`/api/system-prompt/${chatApp.conversationId}`, {
+                    method: 'DELETE'
+                });
+
+                if (response.ok) {
+                    chatApp.addMessage('🔄 AI behavior reset to default', 'system');
+                    document.getElementById('systemPromptInput').value = '';
+                    toggleSystemPromptModal();
+                } else {
+                    throw new Error('Failed to reset system prompt');
+                }
+            } catch (error) {
+                alert('Failed to reset system prompt: ' + error.message);
             }
         }
 

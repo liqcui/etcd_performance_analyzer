@@ -16,7 +16,6 @@ from ocauth.ocp_auth import OCPAuth
 
 class CompactDefragCollector:
     """Collector for etcd disk compact and defrag metrics"""
-    
     def __init__(self, ocp_auth: OCPAuth, duration: str = "1h"):
         self.ocp_auth = ocp_auth
         self.duration = duration
@@ -24,7 +23,7 @@ class CompactDefragCollector:
         self.config = get_config()
         self.utility = mcpToolsUtility(ocp_auth)
         self.timezone = pytz.UTC
-    
+
     async def collect_all_metrics(self) -> Dict[str, Any]:
         """Collect all compact and defrag metrics"""
         try:
@@ -55,6 +54,7 @@ class CompactDefragCollector:
                 "duration": self.duration,
                 "category": "disk_compact_defrag",
                 "metrics": {},
+                "summaries": {},  # New: individual metric summaries
                 "summary": {
                     "total_metrics": len(metrics),
                     "collected_metrics": 0,
@@ -76,6 +76,9 @@ class CompactDefragCollector:
                         )
                         result["metrics"][metric_name] = metric_result
                         
+                        # Create formatted summary for each metric
+                        result["summaries"][metric_name] = self._create_metric_summary(metric_result)
+                        
                         if metric_result["status"] == "success":
                             result["summary"]["collected_metrics"] += 1
                         else:
@@ -87,6 +90,11 @@ class CompactDefragCollector:
                             "status": "error",
                             "error": str(e),
                             "timestamp": datetime.now(self.timezone).isoformat()
+                        }
+                        result["summaries"][metric_name] = {
+                            "status": "error",
+                            "error": str(e),
+                            "metric_name": metric_name
                         }
                         result["summary"]["failed_metrics"] += 1
             
@@ -109,7 +117,8 @@ class CompactDefragCollector:
             return {
                 "status": "success",
                 "data": {
-                    "metrics": result.get("metrics", {}),
+                    "pods_metrics": result.get("metrics", {}),
+                    "metric_summaries": result.get("summaries", {}),  # New: include summaries
                     "summary": result.get("summary", {}),
                     "master_nodes": result.get("master_nodes", [])
                 },
@@ -127,7 +136,7 @@ class CompactDefragCollector:
                 "category": "disk_compact_defrag",
                 "duration": self.duration
             }
-    
+
     async def _collect_single_metric(self, prom: PrometheusBaseQuery, 
                                    metric_config: Dict[str, Any], 
                                    pod_node_mapping: Dict[str, str],
@@ -282,7 +291,7 @@ class CompactDefragCollector:
                 "query": metric_config['expr'],
                 "timestamp": datetime.now(self.timezone).isoformat()
             }
-    
+       
     def _extract_node_from_instance(self, instance: str, master_nodes: List[str]) -> str:
         """Extract node name from instance string and match with master nodes"""
         if not instance:
@@ -304,9 +313,7 @@ class CompactDefragCollector:
         # If no match found, return the extracted candidate
         self.logger.debug(f"Could not match instance '{instance}' to any master node, using '{node_candidate}'")
         return node_candidate
-    
-    # Individual metric collection functions
-    
+
     async def collect_compaction_duration(self) -> Dict[str, Any]:
         """Collect compaction duration metrics"""
         try:
@@ -462,14 +469,14 @@ class CompactDefragCollector:
             }
     
     async def get_summary(self) -> Dict[str, Any]:
-        """Get summary of all compact/defrag metrics"""
+        """Get enhanced summary of all compact/defrag metrics"""
         try:
             all_metrics = await self.collect_all_metrics()
             
             if all_metrics["status"] != "success":
                 return all_metrics
             
-            # Create summary
+            # Create enhanced summary with readable values
             summary = {
                 "status": "success",
                 "timestamp": datetime.now(self.timezone).isoformat(),
@@ -479,60 +486,135 @@ class CompactDefragCollector:
                 "overview": {
                     "compaction": {},
                     "defragmentation": {},
-                    "page_faults": {}
-                }
+                    "page_faults": {},
+                    "snapshots": {}
+                },
+                "metric_summaries": all_metrics.get("summaries", {}),  # Include individual summaries
+                "health_assessment": {}
             }
             
             metrics_data = all_metrics.get("metrics", {})
+            summaries = all_metrics.get("summaries", {})
             
-            # Summarize compaction metrics
+            # Enhanced compaction summary
             compaction_metrics = [k for k in metrics_data.keys() if 'compaction' in k.lower()]
             if compaction_metrics:
-                compaction_summary = {
+                compaction_durations = []
+                compaction_keys = []
+                
+                for metric_name in compaction_metrics:
+                    summary_data = summaries.get(metric_name, {})
+                    if summary_data.get("status") == "success":
+                        if "duration" in metric_name.lower():
+                            avg_raw = summary_data.get("statistics", {}).get("avg", {}).get("raw")
+                            if avg_raw is not None:
+                                compaction_durations.append(avg_raw)
+                        elif "keys" in metric_name.lower():
+                            avg_raw = summary_data.get("statistics", {}).get("avg", {}).get("raw")
+                            if avg_raw is not None:
+                                compaction_keys.append(avg_raw)
+                
+                summary["overview"]["compaction"] = {
                     "total_metrics": len(compaction_metrics),
-                    "avg_max": max([
-                        metrics_data[m].get("overall", {}).get("max", 0) or 0 
-                        for m in compaction_metrics
-                    ], default=0),
-                    "avg_avg": sum([
-                        metrics_data[m].get("overall", {}).get("avg", 0) or 0 
-                        for m in compaction_metrics
-                    ]) / len(compaction_metrics) if compaction_metrics else 0
+                    "avg_duration": {
+                        "raw": sum(compaction_durations) / len(compaction_durations) if compaction_durations else None,
+                        "formatted": self._format_value_with_unit(
+                            sum(compaction_durations) / len(compaction_durations) if compaction_durations else None,
+                            "milliseconds"
+                        )
+                    },
+                    "avg_keys_compacted": {
+                        "raw": sum(compaction_keys) / len(compaction_keys) if compaction_keys else None,
+                        "formatted": self._format_value_with_unit(
+                            sum(compaction_keys) / len(compaction_keys) if compaction_keys else None,
+                            "count"
+                        )
+                    }
                 }
-                summary["overview"]["compaction"] = compaction_summary
             
-            # Summarize defrag metrics
+            # Enhanced defragmentation summary
             defrag_metrics = [k for k in metrics_data.keys() if 'defrag' in k.lower()]
             if defrag_metrics:
-                defrag_summary = {
+                defrag_durations = []
+                
+                for metric_name in defrag_metrics:
+                    summary_data = summaries.get(metric_name, {})
+                    if summary_data.get("status") == "success":
+                        avg_raw = summary_data.get("statistics", {}).get("avg", {}).get("raw")
+                        if avg_raw is not None:
+                            defrag_durations.append(avg_raw)
+                
+                summary["overview"]["defragmentation"] = {
                     "total_metrics": len(defrag_metrics),
-                    "avg_max": max([
-                        metrics_data[m].get("overall", {}).get("max", 0) or 0 
-                        for m in defrag_metrics
-                    ], default=0),
-                    "avg_avg": sum([
-                        metrics_data[m].get("overall", {}).get("avg", 0) or 0 
-                        for m in defrag_metrics
-                    ]) / len(defrag_metrics) if defrag_metrics else 0
+                    "avg_duration": {
+                        "raw": sum(defrag_durations) / len(defrag_durations) if defrag_durations else None,
+                        "formatted": self._format_value_with_unit(
+                            sum(defrag_durations) / len(defrag_durations) if defrag_durations else None,
+                            "seconds"
+                        )
+                    }
                 }
-                summary["overview"]["defragmentation"] = defrag_summary
             
-            # Summarize page fault metrics
+            # Enhanced page faults summary
             pgfault_metrics = [k for k in metrics_data.keys() if 'pgmajfault' in k.lower()]
             if pgfault_metrics:
-                pgfault_summary = {
+                fault_rates = []
+                fault_totals = []
+                
+                for metric_name in pgfault_metrics:
+                    summary_data = summaries.get(metric_name, {})
+                    if summary_data.get("status") == "success":
+                        avg_raw = summary_data.get("statistics", {}).get("avg", {}).get("raw")
+                        if avg_raw is not None:
+                            if "rate" in metric_name.lower():
+                                fault_rates.append(avg_raw)
+                            else:
+                                fault_totals.append(avg_raw)
+                
+                summary["overview"]["page_faults"] = {
                     "total_metrics": len(pgfault_metrics),
-                    "avg_max": max([
-                        metrics_data[m].get("overall", {}).get("max", 0) or 0 
-                        for m in pgfault_metrics
-                    ], default=0),
-                    "avg_avg": sum([
-                        metrics_data[m].get("overall", {}).get("avg", 0) or 0 
-                        for m in pgfault_metrics
-                    ]) / len(pgfault_metrics) if pgfault_metrics else 0,
+                    "avg_fault_rate": {
+                        "raw": sum(fault_rates) / len(fault_rates) if fault_rates else None,
+                        "formatted": self._format_value_with_unit(
+                            sum(fault_rates) / len(fault_rates) if fault_rates else None,
+                            "faults/s"
+                        )
+                    },
+                    "avg_total_faults": {
+                        "raw": sum(fault_totals) / len(fault_totals) if fault_totals else None,
+                        "formatted": self._format_value_with_unit(
+                            sum(fault_totals) / len(fault_totals) if fault_totals else None,
+                            "count"
+                        )
+                    },
                     "filtered_by_master_nodes": True
                 }
-                summary["overview"]["page_faults"] = pgfault_summary
+            
+            # Snapshot metrics summary
+            snapshot_metrics = [k for k in metrics_data.keys() if 'snapshot' in k.lower()]
+            if snapshot_metrics:
+                snapshot_durations = []
+                
+                for metric_name in snapshot_metrics:
+                    summary_data = summaries.get(metric_name, {})
+                    if summary_data.get("status") == "success":
+                        avg_raw = summary_data.get("statistics", {}).get("avg", {}).get("raw")
+                        if avg_raw is not None:
+                            snapshot_durations.append(avg_raw)
+                
+                summary["overview"]["snapshots"] = {
+                    "total_metrics": len(snapshot_metrics),
+                    "avg_duration": {
+                        "raw": sum(snapshot_durations) / len(snapshot_durations) if snapshot_durations else None,
+                        "formatted": self._format_value_with_unit(
+                            sum(snapshot_durations) / len(snapshot_durations) if snapshot_durations else None,
+                            "seconds"
+                        )
+                    }
+                }
+            
+            # Health assessment
+            summary["health_assessment"] = self._assess_overall_health(summaries)
             
             return summary
             
@@ -542,3 +624,247 @@ class CompactDefragCollector:
                 "error": str(e),
                 "timestamp": datetime.now(self.timezone).isoformat()
             }
+
+    def _format_value_with_unit(self, value: float, unit: str) -> str:
+        """Format metric value with appropriate unit and readability"""
+        if value is None:
+            return "N/A"
+        
+        # Handle different unit types
+        if unit.lower() in ['milliseconds', 'ms']:
+            if value >= 1000:
+                return f"{value/1000:.2f} seconds"
+            else:
+                return f"{value:.2f} ms"
+        elif unit.lower() in ['seconds', 's']:
+            if value >= 60:
+                minutes = value / 60
+                if minutes >= 60:
+                    hours = minutes / 60
+                    return f"{hours:.2f} hours"
+                else:
+                    return f"{minutes:.2f} minutes"
+            else:
+                return f"{value:.3f} seconds"
+        elif unit.lower() in ['bytes']:
+            if value >= 1024**3:
+                return f"{value/(1024**3):.2f} GB"
+            elif value >= 1024**2:
+                return f"{value/(1024**2):.2f} MB"
+            elif value >= 1024:
+                return f"{value/1024:.2f} KB"
+            else:
+                return f"{value:.0f} bytes"
+        elif unit.lower() in ['count', 'faults']:
+            return f"{int(value):,}"
+        elif unit.lower() in ['per_second', 'faults/s']:
+            return f"{value:.3f}/sec"
+        elif unit.lower() in ['per_day']:
+            return f"{value:.1f}/day"
+        elif unit.lower() in ['percent', '%']:
+            return f"{value:.2f}%"
+        else:
+            # Default formatting for unknown units
+            if value >= 1000000:
+                return f"{value/1000000:.2f}M {unit}"
+            elif value >= 1000:
+                return f"{value/1000:.2f}K {unit}"
+            else:
+                return f"{value:.3f} {unit}"
+
+    def _create_metric_summary(self, metric_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a formatted summary for a metric"""
+        if metric_result.get("status") != "success":
+            return {
+                "status": "error",
+                "error": metric_result.get("error", "Unknown error")
+            }
+        
+        overall_stats = metric_result.get("overall", {})
+        unit = metric_result.get("unit", "")
+        
+        summary = {
+            "metric_name": metric_result.get("name", ""),
+            "description": metric_result.get("description", ""),
+            "unit": unit,
+            "status": "success",
+            "statistics": {
+                "avg": {
+                    "raw": overall_stats.get("avg"),
+                    "formatted": self._format_value_with_unit(overall_stats.get("avg"), unit)
+                },
+                "max": {
+                    "raw": overall_stats.get("max"),
+                    "formatted": self._format_value_with_unit(overall_stats.get("max"), unit)
+                },
+                "min": {
+                    "raw": overall_stats.get("min"),
+                    "formatted": self._format_value_with_unit(overall_stats.get("min"), unit)
+                },
+                "latest": {
+                    "raw": overall_stats.get("latest"),
+                    "formatted": self._format_value_with_unit(overall_stats.get("latest"), unit)
+                },
+                "count": overall_stats.get("count", 0)
+            },
+            "data_points": overall_stats.get("count", 0),
+            "timestamp": metric_result.get("timestamp")
+        }
+        
+        # Add interpretation based on metric type
+        summary["interpretation"] = self._interpret_metric_values(
+            metric_result.get("name", ""), overall_stats, unit
+        )
+        
+        return summary
+
+    def _interpret_metric_values(self, metric_name: str, stats: Dict[str, Any], unit: str) -> Dict[str, str]:
+        """Provide interpretation of metric values"""
+        interpretation = {}
+        
+        avg_val = stats.get("avg")
+        max_val = stats.get("max")
+        
+        if "compaction" in metric_name.lower():
+            if "duration" in metric_name.lower():
+                if avg_val is not None:
+                    if unit.lower() in ['milliseconds', 'ms']:
+                        if avg_val > 1000:  # > 1 second
+                            interpretation["avg"] = "High - compaction taking significant time"
+                        elif avg_val > 500:
+                            interpretation["avg"] = "Moderate - compaction duration acceptable"
+                        else:
+                            interpretation["avg"] = "Good - fast compaction"
+                    elif unit.lower() in ['seconds', 's']:
+                        if avg_val > 10:
+                            interpretation["avg"] = "High - compaction taking too long"
+                        elif avg_val > 2:
+                            interpretation["avg"] = "Moderate - compaction duration acceptable"
+                        else:
+                            interpretation["avg"] = "Good - fast compaction"
+            elif "keys" in metric_name.lower():
+                if avg_val is not None:
+                    if avg_val > 1000000:
+                        interpretation["avg"] = "High - many keys being compacted"
+                    elif avg_val > 100000:
+                        interpretation["avg"] = "Moderate - normal compaction activity"
+                    else:
+                        interpretation["avg"] = "Low - minimal compaction activity"
+        
+        elif "defrag" in metric_name.lower():
+            if "duration" in metric_name.lower():
+                if avg_val is not None:
+                    if unit.lower() in ['seconds', 's']:
+                        if avg_val > 30:
+                            interpretation["avg"] = "High - defragmentation taking long time"
+                        elif avg_val > 10:
+                            interpretation["avg"] = "Moderate - defragmentation duration acceptable"
+                        else:
+                            interpretation["avg"] = "Good - fast defragmentation"
+        
+        elif "pgmajfault" in metric_name.lower():
+            if avg_val is not None:
+                if "rate" in metric_name.lower():
+                    if avg_val > 10:
+                        interpretation["avg"] = "High - frequent major page faults"
+                    elif avg_val > 1:
+                        interpretation["avg"] = "Moderate - some page fault activity"
+                    else:
+                        interpretation["avg"] = "Low - minimal page fault activity"
+                else:  # total
+                    interpretation["avg"] = f"Total page faults: {int(avg_val):,}"
+        
+        elif "snapshot" in metric_name.lower():
+            if avg_val is not None and unit.lower() in ['seconds', 's']:
+                if avg_val > 5:
+                    interpretation["avg"] = "High - snapshot duration concerning"
+                elif avg_val > 1:
+                    interpretation["avg"] = "Moderate - snapshot duration acceptable"
+                else:
+                    interpretation["avg"] = "Good - fast snapshot creation"
+        
+        return interpretation
+
+    def _assess_overall_health(self, summaries: Dict[str, Any]) -> Dict[str, str]:
+        """Assess overall health based on metric summaries"""
+        assessment = {
+            "compaction_health": "unknown",
+            "defragmentation_health": "unknown", 
+            "page_fault_health": "unknown",
+            "overall_health": "unknown"
+        }
+        
+        # Assess compaction health
+        compaction_issues = 0
+        compaction_total = 0
+        
+        for metric_name, summary in summaries.items():
+            if "compaction" in metric_name.lower() and summary.get("status") == "success":
+                compaction_total += 1
+                interpretation = summary.get("interpretation", {})
+                if "High" in interpretation.get("avg", ""):
+                    compaction_issues += 1
+        
+        if compaction_total > 0:
+            if compaction_issues == 0:
+                assessment["compaction_health"] = "good"
+            elif compaction_issues / compaction_total < 0.5:
+                assessment["compaction_health"] = "moderate"
+            else:
+                assessment["compaction_health"] = "concerning"
+        
+        # Assess defragmentation health
+        defrag_issues = 0
+        defrag_total = 0
+        
+        for metric_name, summary in summaries.items():
+            if "defrag" in metric_name.lower() and summary.get("status") == "success":
+                defrag_total += 1
+                interpretation = summary.get("interpretation", {})
+                if "High" in interpretation.get("avg", ""):
+                    defrag_issues += 1
+        
+        if defrag_total > 0:
+            if defrag_issues == 0:
+                assessment["defragmentation_health"] = "good"
+            elif defrag_issues / defrag_total < 0.5:
+                assessment["defragmentation_health"] = "moderate"
+            else:
+                assessment["defragmentation_health"] = "concerning"
+        
+        # Assess page fault health
+        pgfault_issues = 0
+        pgfault_total = 0
+        
+        for metric_name, summary in summaries.items():
+            if "pgmajfault" in metric_name.lower() and summary.get("status") == "success":
+                pgfault_total += 1
+                interpretation = summary.get("interpretation", {})
+                if "High" in interpretation.get("avg", ""):
+                    pgfault_issues += 1
+        
+        if pgfault_total > 0:
+            if pgfault_issues == 0:
+                assessment["page_fault_health"] = "good"
+            elif pgfault_issues / pgfault_total < 0.5:
+                assessment["page_fault_health"] = "moderate"
+            else:
+                assessment["page_fault_health"] = "concerning"
+        
+        # Overall health assessment
+        health_scores = [
+            assessment["compaction_health"],
+            assessment["defragmentation_health"], 
+            assessment["page_fault_health"]
+        ]
+        
+        if all(h == "good" for h in health_scores if h != "unknown"):
+            assessment["overall_health"] = "good"
+        elif any(h == "concerning" for h in health_scores):
+            assessment["overall_health"] = "concerning"
+        elif any(h == "moderate" for h in health_scores):
+            assessment["overall_health"] = "moderate"
+        else:
+            assessment["overall_health"] = "unknown"
+        
+        return assessment

@@ -12,6 +12,7 @@ import shlex
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 import asyncio
+import subprocess
 
 # Suppress urllib3 SSL warnings for self-signed certificates
 import urllib3
@@ -54,31 +55,212 @@ class OCPAuth:
     
     async def _get_auth_details(self):
         """Extract authentication details from kubeconfig"""
-        try:
-            # Get current context and token
-            contexts, active_context = config.list_kube_config_contexts()
-            if active_context:
-                context_name = active_context['name']
-                self.logger.info(f"Using context: {context_name}")
-                
-                # Load configuration to get token
-                configuration = client.Configuration()
-                config.load_kube_config(client_configuration=configuration)
-                
-                # Get token from configuration
-                if hasattr(configuration, 'api_key') and configuration.api_key:
-                    token = configuration.api_key.get('authorization', '')
-                    if token.startswith('Bearer '):
-                        self.token = token[7:]  # Remove 'Bearer ' prefix
-                    else:
+        # Primary fallback: try to create service account token for Prometheus
+        if not self.token:
+            self.token = await self._create_prometheus_sa_token()
+        
+        # Secondary fallback: try 'oc whoami -t' if SA token creation failed
+        if not self.token:
+            try:
+                self.logger.info("Attempting to get token via 'oc whoami -t'")
+                proc = await asyncio.create_subprocess_exec(
+                    'oc', 'whoami', '-t',
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE
+                )
+                stdout, stderr = await proc.communicate()
+                if proc.returncode == 0:
+                    token = stdout.decode().strip()
+                    if token and len(token) > 10:  # Basic sanity check
                         self.token = token
+                        self.logger.info("Successfully obtained token via 'oc whoami -t'")
+                    else:
+                        self.logger.warning("Token from 'oc whoami -t' appears invalid")
+                else:
+                    err = stderr.decode().strip()
+                    if err:
+                        self.logger.debug(f"'oc whoami -t' failed: {err}")
+            except Exception as e:
+                self.logger.debug(f"Failed to run 'oc whoami -t' for token fallback: {e}")
+        
+        # Final fallback: try to get token from service account
+        if not self.token:
+            try:
+                sa_token_path = "/var/run/secrets/kubernetes.io/serviceaccount/token"
+                if os.path.exists(sa_token_path):
+                    with open(sa_token_path, 'r') as f:
+                        self.token = f.read().strip()
+                    self.logger.info("Using service account token")
+            except Exception as e:
+                self.logger.debug(f"Could not read service account token: {e}")
+        
+        if not self.token:
+            self.logger.warning("No authentication token found - Prometheus access may fail")
+        else:
+            # Don't log the full token, just confirm we have one
+            self.logger.info(f"Authentication token configured (length: {len(self.token)})")
+    
+    async def _create_prometheus_sa_token(self) -> Optional[str]:
+        """Create service account token for Prometheus access"""
+        # List of service accounts to try in order of preference
+        sa_configs = [
+            {'namespace': 'openshift-monitoring', 'name': 'prometheus-k8s'},
+            {'namespace': 'openshift-user-workload-monitoring', 'name': 'prometheus-k8s'},
+            {'namespace': 'openshift-monitoring', 'name': 'prometheus'},
+            {'namespace': 'monitoring', 'name': 'prometheus'},
+        ]
+        
+        for sa_config in sa_configs:
+            namespace = sa_config['namespace']
+            sa_name = sa_config['name']
+            
+            self.logger.info(f"Attempting to create token for SA {sa_name} in namespace {namespace}")
+            
+            # Method 1: Try 'oc create token' (newer method, preferred)
+            token = await self._try_oc_create_token(namespace, sa_name)
+            if token:
+                self.logger.info(f"Successfully created token using 'oc create token' for {namespace}/{sa_name}")
+                return token
+            
+            # Method 2: Try 'oc sa new-token' (older method, fallback)
+            token = await self._try_oc_sa_new_token(namespace, sa_name)
+            if token:
+                self.logger.info(f"Successfully created token using 'oc sa new-token' for {namespace}/{sa_name}")
+                return token
+            
+            self.logger.debug(f"Failed to create token for {namespace}/{sa_name}")
+        
+        self.logger.warning("Failed to create service account token for any Prometheus service account")
+        return None
+    
+    async def _try_oc_create_token(self, namespace: str, sa_name: str) -> Optional[str]:
+        """Try to create token using 'oc create token' command"""
+        try:
+            # Set KUBECONFIG environment if it exists
+            env = os.environ.copy()
+            
+            cmd = ['oc', 'create', 'token', sa_name, '-n', namespace]
+            
+            # Add duration for token validity (24 hours)
+            cmd.extend(['--duration', '24h'])
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            stdout, stderr = await proc.communicate()
+            
+            if proc.returncode == 0:
+                token = stdout.decode().strip()
+                if token and len(token) > 20:  # Basic sanity check for JWT tokens
+                    return token
+                else:
+                    self.logger.debug(f"'oc create token' returned invalid token for {namespace}/{sa_name}")
+            else:
+                stderr_text = stderr.decode().strip()
+                if stderr_text:
+                    self.logger.debug(f"'oc create token' failed for {namespace}/{sa_name}: {stderr_text}")
                 
-                # Set CA cert path if available
-                if hasattr(configuration, 'ssl_ca_cert') and configuration.ssl_ca_cert:
-                    self.ca_cert_path = configuration.ssl_ca_cert
-                    
         except Exception as e:
-            self.logger.warning(f"Could not extract auth details: {e}")
+            self.logger.debug(f"Error running 'oc create token' for {namespace}/{sa_name}: {e}")
+        
+        return None
+    
+    async def _try_oc_sa_new_token(self, namespace: str, sa_name: str) -> Optional[str]:
+        """Try to create token using 'oc sa new-token' command (legacy)"""
+        try:
+            # Set KUBECONFIG environment if it exists
+            env = os.environ.copy()
+            
+            cmd = ['oc', 'sa', 'new-token', sa_name, '-n', namespace]
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            stdout, stderr = await proc.communicate()
+            
+            if proc.returncode == 0:
+                token = stdout.decode().strip()
+                if token and len(token) > 20:  # Basic sanity check
+                    return token
+                else:
+                    self.logger.debug(f"'oc sa new-token' returned invalid token for {namespace}/{sa_name}")
+            else:
+                stderr_text = stderr.decode().strip()
+                if stderr_text:
+                    self.logger.debug(f"'oc sa new-token' failed for {namespace}/{sa_name}: {stderr_text}")
+                
+        except Exception as e:
+            self.logger.debug(f"Error running 'oc sa new-token' for {namespace}/{sa_name}: {e}")
+        
+        return None
+    
+    async def _verify_sa_exists(self, namespace: str, sa_name: str) -> bool:
+        """Verify that service account exists"""
+        try:
+            if not self.k8s_client:
+                return False
+                
+            v1 = client.CoreV1Api(self.k8s_client)
+            
+            # Check if service account exists
+            try:
+                v1.read_namespaced_service_account(name=sa_name, namespace=namespace)
+                return True
+            except ApiException as e:
+                if e.status == 404:
+                    self.logger.debug(f"Service account {namespace}/{sa_name} not found")
+                else:
+                    self.logger.debug(f"Error checking service account {namespace}/{sa_name}: {e}")
+                return False
+                
+        except Exception as e:
+            self.logger.debug(f"Error verifying service account {namespace}/{sa_name}: {e}")
+            return False
+    
+    async def _create_sa_if_missing(self, namespace: str, sa_name: str) -> bool:
+        """Create service account if it doesn't exist (for testing purposes)"""
+        try:
+            if not self.k8s_client:
+                return False
+                
+            # First check if it exists
+            if await self._verify_sa_exists(namespace, sa_name):
+                return True
+            
+            self.logger.debug(f"Service account {namespace}/{sa_name} not found, attempting to create")
+            
+            # Try to create using oc command (safer than direct API calls for permissions)
+            env = os.environ.copy()
+            cmd = ['oc', 'create', 'sa', sa_name, '-n', namespace]
+            
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env=env
+            )
+            
+            stdout, stderr = await proc.communicate()
+            
+            if proc.returncode == 0:
+                self.logger.info(f"Created service account {namespace}/{sa_name}")
+                return True
+            else:
+                stderr_text = stderr.decode().strip()
+                self.logger.debug(f"Failed to create service account {namespace}/{sa_name}: {stderr_text}")
+                return False
+                
+        except Exception as e:
+            self.logger.debug(f"Error creating service account {namespace}/{sa_name}: {e}")
+            return False
     
     async def _discover_prometheus(self) -> Optional[Dict[str, Any]]:
         """Discover Prometheus service in OpenShift monitoring namespace - routes first, then services"""
@@ -453,12 +635,24 @@ class OCPAuth:
         headers = {}
         if self.token:
             headers['Authorization'] = f'Bearer {self.token}'
+            self.logger.debug("Authorization header configured")
+        else:
+            self.logger.warning("No token available for Authorization header")
         return headers
     
     def get_prometheus_config(self) -> Dict[str, Any]:
         """Get Prometheus connection configuration"""
-        return {
+        config = {
             'url': self.prometheus_url,
             'headers': self.get_auth_headers(),
             'verify': self.ca_cert_path if self.ca_cert_path else False
         }
+        
+        # Log configuration for debugging (without sensitive data)
+        config_debug = config.copy()
+        if 'Authorization' in config_debug.get('headers', {}):
+            config_debug['headers'] = config_debug['headers'].copy()
+            config_debug['headers']['Authorization'] = 'Bearer [REDACTED]'
+        
+        self.logger.debug(f"Prometheus config: {config_debug}")
+        return config

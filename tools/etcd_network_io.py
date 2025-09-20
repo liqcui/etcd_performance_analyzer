@@ -87,6 +87,8 @@ class NetworkIOCollector:
                 'timestamp': datetime.now(pytz.UTC).isoformat(),
                 'duration': duration,
                 'data': {
+                    'pods_metrics': {},
+                    # Backward compatibility alias (will be removed later)
                     'container_metrics': {},
                     'node_metrics': {},
                     'cluster_metrics': {}
@@ -107,8 +109,11 @@ class NetworkIOCollector:
                     }
                 
                 # Collect pod metrics
-                container_result = await self._collect_pod_metrics(prom, duration, pod_metrics)
-                results['data']['container_metrics'] = container_result
+                pods_result = await self._collect_pod_metrics(prom, duration, pod_metrics)
+                # Prefer new key
+                results['data']['pods_metrics'] = pods_result
+                # Maintain old key for compatibility
+                results['data']['container_metrics'] = pods_result
                 
                 # Collect node metrics
                 node_result = await self._collect_node_metrics(prom, duration, node_metrics)
@@ -358,7 +363,7 @@ class NetworkIOCollector:
                 'duration': duration,
                 'network_health': 'healthy',
                 'summary': {
-                    'container_metrics_count': len([m for m in data.get('container_metrics', {}).values() if m.get('status') == 'success']),
+                    'container_metrics_count': len([m for m in data.get('pods_metrics', data.get('container_metrics', {})).values() if m.get('status') == 'success']),
                     'node_metrics_count': len([m for m in data.get('node_metrics', {}).values() if m.get('status') == 'success']),
                     'cluster_metrics_count': len([m for m in data.get('cluster_metrics', {}).values() if m.get('status') == 'success']),
                     'total_etcd_pods': len(self._node_mappings.get('pod_to_node', {})),
@@ -368,7 +373,7 @@ class NetworkIOCollector:
             }
             
             # Check for high peer latency
-            container_metrics = data.get('container_metrics', {})
+            container_metrics = data.get('pods_metrics', data.get('container_metrics', {}))
             if 'peer2peer_latency_p99' in container_metrics:
                 latency_data = container_metrics['peer2peer_latency_p99']
                 if latency_data.get('status') == 'success':

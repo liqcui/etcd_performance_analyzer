@@ -248,6 +248,11 @@ class networkIOELT(utilityELT):
                 
                 if container_rows:
                     df_container = pd.DataFrame(container_rows)
+                    try:
+                        if 'Pod Name' in df_container.columns:
+                            df_container = df_container.sort_values(by=['Pod Name'])
+                    except Exception:
+                        pass
                     dataframes['container_metrics'] = df_container
 
             # Create consolidated node metrics table (Node Network Usage)
@@ -309,6 +314,11 @@ class networkIOELT(utilityELT):
                 
                 if node_rows:
                     df_node = pd.DataFrame(node_rows)
+                    try:
+                        if 'Node Name' in df_node.columns:
+                            df_node = df_node.sort_values(by=['Node Name'])
+                    except Exception:
+                        pass
                     dataframes['node_performance'] = df_node
 
             # Create cluster metrics table (gRPC Active Stream)
@@ -334,6 +344,11 @@ class networkIOELT(utilityELT):
                 
                 if cluster_rows:
                     df_cluster = pd.DataFrame(cluster_rows)
+                    try:
+                        if 'Stream Type' in df_cluster.columns:
+                            df_cluster = df_cluster.sort_values(by=['Stream Type'])
+                    except Exception:
+                        pass
                     dataframes['grpc_streams'] = df_cluster
 
         except Exception as e:

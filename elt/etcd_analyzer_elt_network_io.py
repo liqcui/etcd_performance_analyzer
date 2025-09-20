@@ -134,6 +134,20 @@ class networkIOELT(utilityELT):
                         
                         dataframes[metric_name.replace('network_io_', '')] = df
 
+            # Also provide a consolidated container metrics table without the 'title' column
+            if container_metrics:
+                consolidated_rows = []
+                for item in container_metrics:
+                    consolidated_rows.append({
+                        'Pod Name': self.truncate_node_name(item.get('pod_name', 'unknown')),
+                        'Average': self._format_network_value(item.get('avg_value'), item.get('unit', '')),
+                        'Maximum': self._format_network_value(item.get('max_value'), item.get('unit', '')),
+                        'Unit': item.get('unit', '')
+                    })
+                df_consolidated = pd.DataFrame(consolidated_rows)
+                if not df_consolidated.empty:
+                    dataframes['container_metrics'] = df_consolidated
+
             # Create individual tables for each node metric
             node_metrics = structured_data.get('node_metrics', [])
             node_metric_names = list(set([m['metric_name'] for m in node_metrics]))

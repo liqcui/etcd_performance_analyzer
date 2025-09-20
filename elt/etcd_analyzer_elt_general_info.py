@@ -150,6 +150,13 @@ class generalInfoELT(utilityELT):
                             if existing_cols:
                                 df = df[existing_cols]
                             dataframes[key] = df
+                        elif key == 'metrics_overview':
+                            # Move 'Unit' after 'Cluster Max'
+                            desired_order = ['Metric', 'Cluster Avg', 'Cluster Max', 'Unit', 'Pods Count']
+                            existing_cols = [c for c in desired_order if c in df.columns]
+                            if existing_cols:
+                                df = df[existing_cols]
+                            dataframes[key] = df
                         else:
                             # Apply column limiting for other tables
                             df_limited = self.limit_dataframe_columns(df, table_name=key)

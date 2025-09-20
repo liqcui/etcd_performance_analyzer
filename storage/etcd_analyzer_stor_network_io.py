@@ -23,15 +23,15 @@ class NetworkIOStorELT(BaseStoreELT):
     def __init__(self, db_path: str = "etcd_analyzer.duckdb"):
         super().__init__(db_path)
         
-        # Container metrics - individual tables for each metric
+        # Pods metrics (formerly container metrics) - individual tables for each metric
         self.container_metrics = {
-            'network_io_container_network_rx': 'container_metrics.network_io_container_network_rx',
-            'network_io_container_network_tx': 'container_metrics.network_io_container_network_tx',
-            'network_io_peer2peer_latency_p99': 'container_metrics.network_io_peer2peer_latency_p99',
-            'network_io_network_peer_received_bytes': 'container_metrics.network_io_network_peer_received_bytes',
-            'network_io_network_peer_sent_bytes': 'container_metrics.network_io_network_peer_sent_bytes',
-            'network_io_network_client_grpc_received_bytes': 'container_metrics.network_io_network_client_grpc_received_bytes',
-            'network_io_network_client_grpc_sent_bytes': 'container_metrics.network_io_network_client_grpc_sent_bytes'
+            'network_io_container_network_rx': 'pods_metrics.network_io_container_network_rx',
+            'network_io_container_network_tx': 'pods_metrics.network_io_container_network_tx',
+            'network_io_peer2peer_latency_p99': 'pods_metrics.network_io_peer2peer_latency_p99',
+            'network_io_network_peer_received_bytes': 'pods_metrics.network_io_network_peer_received_bytes',
+            'network_io_network_peer_sent_bytes': 'pods_metrics.network_io_network_peer_sent_bytes',
+            'network_io_network_client_grpc_received_bytes': 'pods_metrics.network_io_network_client_grpc_received_bytes',
+            'network_io_network_client_grpc_sent_bytes': 'pods_metrics.network_io_network_client_grpc_sent_bytes'
         }
         
         # Node metrics - individual tables for each metric
@@ -60,7 +60,7 @@ class NetworkIOStorELT(BaseStoreELT):
         
         # Create schemas
         schema_operations = [
-            ("CREATE SCHEMA IF NOT EXISTS container_metrics", None),
+            ("CREATE SCHEMA IF NOT EXISTS pods_metrics", None),
             ("CREATE SCHEMA IF NOT EXISTS node_metrics", None),
             ("CREATE SCHEMA IF NOT EXISTS cluster_metrics", None)
         ]
@@ -189,11 +189,11 @@ class NetworkIOStorELT(BaseStoreELT):
             
             storage_results = {}
             
-            # Store container metrics
+            # Store pods metrics (backward compatible with container_metrics key)
             container_result = await self._store_container_metrics(
-                testing_id, data_section.get("container_metrics", {}), timestamp
+                testing_id, data_section.get("pods_metrics", data_section.get("container_metrics", {})), timestamp
             )
-            storage_results["container_metrics"] = container_result
+            storage_results["pods_metrics"] = container_result
             
             # Store node metrics
             node_result = await self._store_node_metrics(
@@ -389,7 +389,7 @@ class NetworkIOStorELT(BaseStoreELT):
                 'network_io_grpc_active_lease_streams': 'gRPC Active Lease Streams'
             }
             
-            # Generate container metrics summary from individual tables
+            # Generate pods metrics summary from individual tables
             for metric_name, table_name in self.container_metrics.items():
                 try:
                     summary = self._generate_individual_metric_summary(table_name, testing_id, metric_name)
@@ -588,12 +588,13 @@ class NetworkIOStorELT(BaseStoreELT):
                 "status": "success",
                 "duration": duration,
                 "query_timestamp": StorageUtilityELT.current_timestamp().isoformat(),
+                "pods_metrics": {},
                 "container_metrics": {},
                 "node_metrics": {},
                 "cluster_metrics": {}
             }
             
-            # Query container metrics from individual tables
+            # Query pods metrics from individual tables
             for metric_name, table_name in self.container_metrics.items():
                 try:
                     query = f"""
@@ -603,7 +604,7 @@ class NetworkIOStorELT(BaseStoreELT):
                     ORDER BY timestamp DESC, pod_name
                     """
                     rows = self.conn.execute(query, (cutoff_time,)).fetchall()
-                    results["container_metrics"][metric_name] = [
+                    results["pods_metrics"][metric_name] = [
                         {
                             "testing_id": row[0],
                             "pod_name": row[1],
@@ -617,7 +618,7 @@ class NetworkIOStorELT(BaseStoreELT):
                     ]
                 except Exception as e:
                     logger.warning(f"Error querying {metric_name}: {str(e)}")
-                    results["container_metrics"][metric_name] = []
+                    results["pods_metrics"][metric_name] = []
             
             # Query node metrics from individual tables
             for metric_name, table_name in self.node_metrics.items():
@@ -692,12 +693,13 @@ class NetworkIOStorELT(BaseStoreELT):
                 "start_time": start_time,
                 "end_time": end_time,
                 "query_timestamp": StorageUtilityELT.current_timestamp().isoformat(),
+                "pods_metrics": {},
                 "container_metrics": {},
                 "node_metrics": {},
                 "cluster_metrics": {}
             }
             
-            # Query container metrics from individual tables
+            # Query pods metrics from individual tables
             for metric_name, table_name in self.container_metrics.items():
                 try:
                     query = f"""
@@ -707,7 +709,7 @@ class NetworkIOStorELT(BaseStoreELT):
                     ORDER BY timestamp DESC, pod_name
                     """
                     rows = self.conn.execute(query, (start_dt, end_dt)).fetchall()
-                    results["container_metrics"][metric_name] = [
+                    results["pods_metrics"][metric_name] = [
                         {
                             "testing_id": row[0],
                             "pod_name": row[1],
@@ -721,7 +723,7 @@ class NetworkIOStorELT(BaseStoreELT):
                     ]
                 except Exception as e:
                     logger.warning(f"Error querying {metric_name}: {str(e)}")
-                    results["container_metrics"][metric_name] = []
+                    results["pods_metrics"][metric_name] = []
             
             # Query node metrics from individual tables
             for metric_name, table_name in self.node_metrics.items():

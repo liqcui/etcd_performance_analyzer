@@ -831,19 +831,19 @@ async def main():
         # Example 1: Collect and store current cluster, WAL fsync, disk I/O, network I/O, backend commit, and compact defrag metrics
         logger.info("=== Collect Current Metrics (All Types Including Compact Defrag) ===")
         result1 = await agent.query_by_duration(duration="1h", print_table_info=True)
-        logger.info(f"Current analysis result: {json.dumps(result1, indent=2, default=str)}")
+        #logger.info(f"Current analysis result: {json.dumps(result1, indent=2, default=str)}")
         
         # Example 2: Query by specific time range (UTC) - collect new data including compact defrag
         logger.info("=== Query by Time Range (UTC) - New Data Collection ===")
         start_time = "2025-09-18T14:00:00Z"
         end_time = "2025-09-18T15:00:00Z" 
         result2 = await agent.query_by_time_range(start_time, end_time)
-        logger.info(f"Time range query result: {json.dumps(result2, indent=2, default=str)}")
+        # logger.info(f"Time range query result: {json.dumps(result2, indent=2, default=str)}")
         
         # Example 3: Query stored data by duration (all metrics including compact defrag)
         logger.info("=== Query Stored Data (Last 2 Hours) - All Metrics ===")
         stored_result = await agent.query_by_duration(duration="2h", query_stored_only=True)
-        logger.info(f"Stored data query result: {json.dumps(stored_result, indent=2, default=str)}")
+        # logger.info(f"Stored data query result: {json.dumps(stored_result, indent=2, default=str)}")
         
         # Example 4: Query stored data by time range including compact defrag
         logger.info("=== Query Stored Data by Time Range - Including Compact Defrag ===")
@@ -852,18 +852,18 @@ async def main():
             end_time="2025-09-18T16:00:00Z",
             query_stored_only=True
         )
-        logger.info(f"Stored time range result: {json.dumps(stored_time_result, indent=2, default=str)}")
+        # logger.info(f"Stored time range result: {json.dumps(stored_time_result, indent=2, default=str)}")
         
         # Example 5: Collect new data with different duration including compact defrag metrics
         logger.info("=== Collect 30-minute metrics (All Types) ===")
         result5 = await agent.query_by_duration(duration="30m")
-        logger.info(f"30-minute analysis result: {json.dumps(result5, indent=2, default=str)}")
+        # logger.info(f"30-minute analysis result: {json.dumps(result5, indent=2, default=str)}")
         
         # Example 6: Test compact defrag specific functionality
         logger.info("=== Compact Defrag Specific Testing ===")
         if result5.get("status") == "success" and result5.get("compact_defrag_summary"):
             compact_defrag_summary = result5["compact_defrag_summary"]
-            logger.info(f"Compact defrag summary: {json.dumps(compact_defrag_summary, indent=2, default=str)}")
+            # logger.info(f"Compact defrag summary: {json.dumps(compact_defrag_summary, indent=2, default=str)}")
         
     except Exception as e:
         logger.error(f"Example execution failed: {str(e)}")

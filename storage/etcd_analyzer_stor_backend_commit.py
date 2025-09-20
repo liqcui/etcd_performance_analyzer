@@ -6,7 +6,7 @@ Handles storage and retrieval of etcd backend commit metrics data in DuckDB
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional, Tuple
 import duckdb
 from tabulate import tabulate

@@ -192,27 +192,29 @@ class networkIOELT(utilityELT):
         try:
             # Network overview table - shows top metrics with avg/max usage
             if structured_data.get('overview'):
-                overview_df = pd.DataFrame(structured_data['overview'])
-                if not overview_df.empty:
-                    # Format values for display with highlighting
-                    overview_df['avg_formatted'] = overview_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['avg_usage'], row['raw_metric_name'], row['unit']), axis=1)
-                    overview_df['max_formatted'] = overview_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['max_usage'], row['raw_metric_name'], row['unit']), axis=1)
-                    
-                    # Identify top performers (top 3 by average usage)
-                    top_indices = list(range(min(3, len(overview_df))))  # Top 3 metrics
-                    for idx in top_indices:
-                        if idx < len(overview_df):
-                            overview_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
-                                overview_df.at[idx, 'avg_usage'], overview_df.at[idx, 'raw_metric_name'], 
-                                overview_df.at[idx, 'unit'], is_top=True)
-                    
-                    dataframes['network_overview'] = overview_df
+                overview_data = structured_data['overview']
+                if overview_data:  # Check if list is not empty
+                    overview_df = pd.DataFrame(overview_data)
+                    if not overview_df.empty:
+                        # Format values for display with highlighting
+                        overview_df['avg_formatted'] = overview_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['avg_usage'], row['raw_metric_name'], row['unit']), axis=1)
+                        overview_df['max_formatted'] = overview_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['max_usage'], row['raw_metric_name'], row['unit']), axis=1)
+                        
+                        # Identify top performers (top 3 by average usage)
+                        top_indices = list(range(min(3, len(overview_df))))  # Top 3 metrics
+                        for idx in top_indices:
+                            if idx < len(overview_df):
+                                overview_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
+                                    overview_df.at[idx, 'avg_usage'], overview_df.at[idx, 'raw_metric_name'], 
+                                    overview_df.at[idx, 'unit'], is_top=True)
+                        
+                        dataframes['metrics_overview'] = overview_df
             
-            # Pod metrics table (supports either key)
+            # Pod/Container metrics table - check both keys for backward compatibility
             pod_metrics_list = structured_data.get('pod_metrics') or structured_data.get('container_metrics')
-            if pod_metrics_list:
+            if pod_metrics_list:  # Check if list exists and is not empty
                 pod_df = pd.DataFrame(pod_metrics_list)
                 if not pod_df.empty:
                     # Format values for display
@@ -233,43 +235,64 @@ class networkIOELT(utilityELT):
             
             # Node metrics table
             if structured_data.get('node_metrics'):
-                node_df = pd.DataFrame(structured_data['node_metrics'])
-                if not node_df.empty:
-                    # Format values for display
-                    node_df['avg_formatted'] = node_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
-                    node_df['max_formatted'] = node_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
-                    
-                    # Identify top performers
-                    top_indices = self.identify_top_values(structured_data['node_metrics'], 'avg_value')
-                    for idx in top_indices:
-                        if idx < len(node_df):
-                            node_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
-                                node_df.at[idx, 'avg_value'], node_df.at[idx, 'metric_name'], 
-                                node_df.at[idx, 'unit'], is_top=True)
-                    
-                    dataframes['node_performance'] = node_df
+                node_metrics_list = structured_data['node_metrics']
+                if node_metrics_list:  # Check if list is not empty
+                    node_df = pd.DataFrame(node_metrics_list)
+                    if not node_df.empty:
+                        # Format values for display
+                        node_df['avg_formatted'] = node_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
+                        node_df['max_formatted'] = node_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
+                        
+                        # Identify top performers
+                        top_indices = self.identify_top_values(node_metrics_list, 'avg_value')
+                        for idx in top_indices:
+                            if idx < len(node_df):
+                                node_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
+                                    node_df.at[idx, 'avg_value'], node_df.at[idx, 'metric_name'], 
+                                    node_df.at[idx, 'unit'], is_top=True)
+                        
+                        dataframes['node_performance'] = node_df
             
             # Cluster metrics table
             if structured_data.get('cluster_metrics'):
-                cluster_df = pd.DataFrame(structured_data['cluster_metrics'])
-                if not cluster_df.empty:
-                    # Format values for display
-                    cluster_df['avg_formatted'] = cluster_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
-                    cluster_df['max_formatted'] = cluster_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
-                    cluster_df['latest_formatted'] = cluster_df.apply(lambda row: 
-                        self.highlight_network_io_values(row['latest_value'], row['metric_name'], row['unit']), axis=1)
-                    
-                    dataframes['grpc_streams'] = cluster_df
-                    
+                cluster_metrics_list = structured_data['cluster_metrics']
+                if cluster_metrics_list:  # Check if list is not empty
+                    cluster_df = pd.DataFrame(cluster_metrics_list)
+                    if not cluster_df.empty:
+                        # Format values for display
+                        cluster_df['avg_formatted'] = cluster_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
+                        cluster_df['max_formatted'] = cluster_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
+                        cluster_df['latest_formatted'] = cluster_df.apply(lambda row: 
+                            self.highlight_network_io_values(row['latest_value'], row['metric_name'], row['unit']), axis=1)
+                        
+                        dataframes['grpc_streams'] = cluster_df
+            
+            # If no dataframes were created, create a fallback informational table
+            if not dataframes:
+                # Create a simple status table
+                fallback_data = [{
+                    'Status': 'No Network I/O Data Available',
+                    'Details': 'No metrics were found in the provided data',
+                    'Suggestion': 'Verify that network I/O metrics are being collected'
+                }]
+                dataframes['status'] = pd.DataFrame(fallback_data)
+                
         except Exception as e:
             logger.error(f"Failed to create DataFrames: {e}")
+            # Create error information table
+            error_data = [{
+                'Error': 'DataFrame Creation Failed',
+                'Message': str(e),
+                'Action': 'Check the input data structure and format'
+            }]
+            dataframes['error_info'] = pd.DataFrame(error_data)
         
         return dataframes
-    
+
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
         """Generate HTML tables from DataFrames"""
         html_tables = {}
@@ -381,3 +404,60 @@ class networkIOELT(utilityELT):
         except Exception as e:
             logger.error(f"Failed to generate network I/O summary: {e}")
             return f"Network I/O summary generation failed: {str(e)}"
+
+    def _calculate_pod_throughput_avg(self, pod_metrics: List[Dict[str, Any]]) -> float:
+            """Calculate average pod throughput in Mbps"""
+            try:
+                throughput_metrics = [item for item in pod_metrics 
+                                    if any(keyword in item['metric_name'].lower() 
+                                        for keyword in ['rx', 'tx', 'bytes'])]
+                if not throughput_metrics:
+                    return 0.0
+                
+                # Convert bytes/second to Mbps
+                total_throughput = sum(item['avg_value'] for item in throughput_metrics)
+                return (total_throughput * 8) / (1024 * 1024)  # Convert bytes/s to Mbps
+            except Exception:
+                return 0.0
+    
+    def _calculate_node_utilization_avg(self, node_metrics: List[Dict[str, Any]]) -> float:
+        """Calculate average node network utilization in Mbps"""
+        try:
+            utilization_metrics = [item for item in node_metrics 
+                                 if 'utilization' in item['metric_name'].lower()]
+            if not utilization_metrics:
+                return 0.0
+            
+            # Assuming utilization is already in bits/second, convert to Mbps
+            total_utilization = sum(item['avg_value'] for item in utilization_metrics)
+            return total_utilization / (1024 * 1024)  # Convert bits/s to Mbps
+        except Exception:
+            return 0.0
+    
+    def _get_active_streams_count(self, cluster_metrics: List[Dict[str, Any]]) -> int:
+        """Get current active gRPC streams count"""
+        try:
+            stream_metrics = [item for item in cluster_metrics 
+                            if 'watch_streams' in item['metric_name'].lower()]
+            if stream_metrics:
+                return int(stream_metrics[0]['latest_value'])
+            return 0
+        except Exception:
+            return 0
+    
+    def _assess_stream_health(self, cluster_metrics: List[Dict[str, Any]]) -> str:
+        """Assess gRPC stream health based on count"""
+        try:
+            active_streams = self._get_active_streams_count(cluster_metrics)
+            if active_streams == 0:
+                return "no"
+            elif active_streams < 100:
+                return "low"
+            elif active_streams < 500:
+                return "normal"
+            elif active_streams < 1000:
+                return "high"
+            else:
+                return "critical"
+        except Exception:
+            return "unknown"            

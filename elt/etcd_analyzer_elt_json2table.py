@@ -384,8 +384,9 @@ class PerformanceDataELT(utilityELT):
                 return self.general_info_elt.transform_to_dataframes(structured_data)
             elif data_type == 'compact_defrag':
                 return self.compact_defrag_elt.transform_to_dataframes(structured_data) 
-            elif data_type == 'network_io':  # Add this line
-                return self.network_io_elt.transform_to_dataframes(structured_data)                               
+            elif data_type == 'network_io':
+                logger.info("Processing network_io data type")  # Add this for debugging
+                return self.network_io_elt.transform_to_dataframes(structured_data)                                               
             else:
                 # Default transformation for other data types
                 dataframes = {}

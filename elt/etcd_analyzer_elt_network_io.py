@@ -114,7 +114,6 @@ class networkIOELT(utilityELT):
                     df_data = []
                     for item in metric_data:
                         df_data.append({
-                            'Metric Name': item['title'],
                             'Pod Name': self.truncate_node_name(item['pod_name']),
                             'Average': self._format_network_value(item['avg_value'], item['unit']),
                             'Maximum': self._format_network_value(item['max_value'], item['unit']),

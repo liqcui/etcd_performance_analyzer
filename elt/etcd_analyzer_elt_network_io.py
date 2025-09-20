@@ -198,6 +198,7 @@ class networkIOELT(utilityELT):
             if overview_data:
                 df_overview = pd.DataFrame(overview_data)
                 dataframes['metrics_overview'] = df_overview
+
             # Create consolidated container metrics table (Container Network Usage)
             container_metrics = structured_data.get('container_metrics', [])
             if container_metrics:
@@ -221,17 +222,31 @@ class networkIOELT(utilityELT):
                         pod_data[pod_name]['tx_unit'] = item.get('unit', '')
                     elif 'grpc_received' in metric_type:
                         pod_data[pod_name]['grpc_rx_avg'] = item.get('avg_value')
+                        pod_data[pod_name]['grpc_rx_max'] = item.get('max_value')
                         pod_data[pod_name]['grpc_rx_unit'] = item.get('unit', '')
                     elif 'grpc_sent' in metric_type:
                         pod_data[pod_name]['grpc_tx_avg'] = item.get('avg_value')
+                        pod_data[pod_name]['grpc_tx_max'] = item.get('max_value')
                         pod_data[pod_name]['grpc_tx_unit'] = item.get('unit', '')
+                    elif 'peer_received' in metric_type:
+                        pod_data[pod_name]['peer_rx_avg'] = item.get('avg_value')
+                        pod_data[pod_name]['peer_rx_max'] = item.get('max_value')
+                        pod_data[pod_name]['peer_rx_unit'] = item.get('unit', '')
+                    elif 'peer_sent' in metric_type:
+                        pod_data[pod_name]['peer_tx_avg'] = item.get('avg_value')
+                        pod_data[pod_name]['peer_tx_max'] = item.get('max_value')
+                        pod_data[pod_name]['peer_tx_unit'] = item.get('unit', '')
+                    elif 'latency' in metric_type:
+                        pod_data[pod_name]['latency_avg'] = item.get('avg_value')
+                        pod_data[pod_name]['latency_max'] = item.get('max_value')
+                        pod_data[pod_name]['latency_unit'] = item.get('unit', '')
                 
                 # Create DataFrame for container metrics
                 container_rows = []
                 for pod_name, data in pod_data.items():
                     row = {
-                        'Pod Name': self.truncate_node_name(pod_name),
-                        'Node': self.truncate_node_name(data['node_name'])
+                        'Pod Name': self.truncate_node_name(pod_name, 35),
+                        'Node': self.truncate_node_name(data['node_name'], 25)
                     }
                     
                     # Add network RX/TX if available
@@ -244,15 +259,19 @@ class networkIOELT(utilityELT):
                         row['gRPC RX (Avg)'] = self._format_network_value(data['grpc_rx_avg'], data.get('grpc_rx_unit', ''))
                         row['gRPC TX (Avg)'] = self._format_network_value(data.get('grpc_tx_avg'), data.get('grpc_tx_unit', ''))
                     
+                    # Add peer traffic if available
+                    if 'peer_rx_avg' in data:
+                        row['Peer RX (Avg)'] = self._format_network_value(data['peer_rx_avg'], data.get('peer_rx_unit', ''))
+                        row['Peer TX (Avg)'] = self._format_network_value(data.get('peer_tx_avg'), data.get('peer_tx_unit', ''))
+                    
+                    # Add latency if available
+                    if 'latency_avg' in data:
+                        row['Latency P99 (Avg)'] = self._format_network_value(data['latency_avg'], data.get('latency_unit', ''))
+                    
                     container_rows.append(row)
                 
                 if container_rows:
                     df_container = pd.DataFrame(container_rows)
-                    try:
-                        if 'Pod Name' in df_container.columns:
-                            df_container = df_container.sort_values(by=['Pod Name'])
-                    except Exception:
-                        pass
                     dataframes['container_metrics'] = df_container
 
             # Create consolidated node metrics table (Node Network Usage)
@@ -270,55 +289,56 @@ class networkIOELT(utilityELT):
                     # Store values based on metric type
                     if 'rx_utilization' in metric_type:
                         node_data[node_name]['rx_util_avg'] = item.get('avg_value')
+                        node_data[node_name]['rx_util_max'] = item.get('max_value')
                         node_data[node_name]['rx_util_unit'] = item.get('unit', '')
                     elif 'tx_utilization' in metric_type:
                         node_data[node_name]['tx_util_avg'] = item.get('avg_value')
+                        node_data[node_name]['tx_util_max'] = item.get('max_value')
                         node_data[node_name]['tx_util_unit'] = item.get('unit', '')
                     elif 'rx_package' in metric_type:
                         node_data[node_name]['rx_pkg_avg'] = item.get('avg_value')
+                        node_data[node_name]['rx_pkg_max'] = item.get('max_value')
                         node_data[node_name]['rx_pkg_unit'] = item.get('unit', '')
                     elif 'tx_package' in metric_type:
                         node_data[node_name]['tx_pkg_avg'] = item.get('avg_value')
+                        node_data[node_name]['tx_pkg_max'] = item.get('max_value')
                         node_data[node_name]['tx_pkg_unit'] = item.get('unit', '')
                     elif 'rx_drop' in metric_type:
                         node_data[node_name]['rx_drop_avg'] = item.get('avg_value')
+                        node_data[node_name]['rx_drop_max'] = item.get('max_value')
                     elif 'tx_drop' in metric_type:
                         node_data[node_name]['tx_drop_avg'] = item.get('avg_value')
+                        node_data[node_name]['tx_drop_max'] = item.get('max_value')
                 
                 # Create DataFrame for node metrics
                 node_rows = []
                 for node_name, data in node_data.items():
                     row = {
-                        'Node Name': self.truncate_node_name(node_name)
+                        'Node Name': self.truncate_node_name(node_name, 30)
                     }
                     
-                    # Add utilization metrics
+                    # Add utilization metrics with proper units
                     if 'rx_util_avg' in data:
-                        row['RX Utilization'] = self._format_network_value(data['rx_util_avg'], data.get('rx_util_unit', ''))
+                        row['RX Utilization (Avg)'] = self._format_network_value(data['rx_util_avg'], data.get('rx_util_unit', ''))
                     if 'tx_util_avg' in data:
-                        row['TX Utilization'] = self._format_network_value(data['tx_util_avg'], data.get('tx_util_unit', ''))
+                        row['TX Utilization (Avg)'] = self._format_network_value(data['tx_util_avg'], data.get('tx_util_unit', ''))
                     
-                    # Add package metrics
+                    # Add package metrics with proper units
                     if 'rx_pkg_avg' in data:
-                        row['RX Packages'] = self._format_network_value(data['rx_pkg_avg'], data.get('rx_pkg_unit', ''))
+                        row['RX Packets (Avg)'] = self._format_network_value(data['rx_pkg_avg'], data.get('rx_pkg_unit', ''))
                     if 'tx_pkg_avg' in data:
-                        row['TX Packages'] = self._format_network_value(data['tx_pkg_avg'], data.get('tx_pkg_unit', ''))
+                        row['TX Packets (Avg)'] = self._format_network_value(data['tx_pkg_avg'], data.get('tx_pkg_unit', ''))
                     
                     # Add drop metrics
                     if 'rx_drop_avg' in data:
-                        row['RX Drops'] = f"{data['rx_drop_avg']:.2f}" if data['rx_drop_avg'] > 0 else "0"
+                        row['RX Drops (Avg)'] = f"{data['rx_drop_avg']:.3f}" if data['rx_drop_avg'] > 0 else "0"
                     if 'tx_drop_avg' in data:
-                        row['TX Drops'] = f"{data['tx_drop_avg']:.2f}" if data['tx_drop_avg'] > 0 else "0"
+                        row['TX Drops (Avg)'] = f"{data['tx_drop_avg']:.3f}" if data['tx_drop_avg'] > 0 else "0"
                     
                     node_rows.append(row)
                 
                 if node_rows:
                     df_node = pd.DataFrame(node_rows)
-                    try:
-                        if 'Node Name' in df_node.columns:
-                            df_node = df_node.sort_values(by=['Node Name'])
-                    except Exception:
-                        pass
                     dataframes['node_performance'] = df_node
 
             # Create cluster metrics table (gRPC Active Stream)
@@ -344,11 +364,6 @@ class networkIOELT(utilityELT):
                 
                 if cluster_rows:
                     df_cluster = pd.DataFrame(cluster_rows)
-                    try:
-                        if 'Stream Type' in df_cluster.columns:
-                            df_cluster = df_cluster.sort_values(by=['Stream Type'])
-                    except Exception:
-                        pass
                     dataframes['grpc_streams'] = df_cluster
 
         except Exception as e:
@@ -391,7 +406,11 @@ class networkIOELT(utilityELT):
         for table_name, df in dataframes.items():
             if not df.empty:
                 display_name = table_name_mapping.get(table_name, table_name.replace('_', ' ').title())
-                html_tables[table_name] = self.create_html_table(df, display_name)
+                
+                # Apply column limits for better readability
+                limited_df = self.limit_dataframe_columns(df, max_cols=6, table_name=table_name)
+                
+                html_tables[table_name] = self.create_html_table(limited_df, display_name)
         
         return html_tables
 

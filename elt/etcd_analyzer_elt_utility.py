@@ -843,8 +843,6 @@ class utilityELT:
         else:
             return 'Other'      
 
-# Add these methods to the utilityELT class in etcd_analyzer_elt_utility.py
-
     def format_network_bytes_per_second(self, bytes_per_sec: float) -> str:
         """Format network bytes per second to readable units"""
         try:
@@ -1010,7 +1008,7 @@ class utilityELT:
             for metric in metrics_data:
                 if metric.get('avg_value') is not None:
                     total_metrics += 1
-                    thresholds = self._get_network_io_thresholds(metric.get('metric_type', ''))
+                    thresholds = self._get_network_io_thresholds(metric.get('metric_name', ''))
                     
                     if thresholds:
                         value = metric['avg_value']
@@ -1029,3 +1027,4 @@ class utilityELT:
         except Exception as e:
             logger.error(f"Failed to assess network I/O health: {e}")
             return "unknown"            
+

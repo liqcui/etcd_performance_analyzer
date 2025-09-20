@@ -723,6 +723,9 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
         for table_name, html_table in html_tables.items():
             if table_name not in added_tables:
                 table_title = table_name.replace('_', ' ').title()
+                # Custom titles for General Info module
+                if data_type == 'general_info' and table_name == 'pod_performance':
+                    table_title = 'The Usage of General Info Per Pods'
                 output_parts.append(f"<h5 class='mt-3'>{table_title}</h5>")
                 output_parts.append(html_table)
         

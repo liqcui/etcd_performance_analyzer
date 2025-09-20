@@ -7,6 +7,7 @@ import logging
 from typing import Dict, Any, List, Union
 import pandas as pd
 from .etcd_analyzer_elt_utility import utilityELT
+from config.etcd_config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +16,11 @@ class generalInfoELT(utilityELT):
     
     def __init__(self):
         super().__init__()
+        # Load metrics config to map metric names to display titles/units
+        try:
+            self.config = get_config()
+        except Exception:
+            self.config = None
     
     def extract_general_info(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Extract general info data from tool results"""
@@ -38,8 +44,24 @@ class generalInfoELT(utilityELT):
             # Process each metric
             for metric_name, metric_data in pod_metrics.items():
                 if isinstance(metric_data, dict) and 'pods' in metric_data:
-                    title = metric_data.get('title', metric_name)
-                    unit = metric_data.get('unit', '')
+                    # Prefer title/unit from config if available
+                    cfg_title = None
+                    cfg_unit = None
+                    try:
+                        if self.config:
+                            cfg = self.config.get_metric_by_name(metric_name)
+                            if cfg:
+                                cfg_title = cfg.get('title')
+                                cfg_unit = cfg.get('unit')
+                    except Exception:
+                        pass
+                    # Determine display title and unit with sensible fallbacks
+                    display_title = (
+                        metric_data.get('title')
+                        or cfg_title
+                        or metric_name.replace('_', ' ').title()
+                    )
+                    unit = metric_data.get('unit', cfg_unit or '')
                     pods = metric_data.get('pods', {})
                     
                     # Calculate cluster-wide statistics
@@ -55,7 +77,7 @@ class generalInfoELT(utilityELT):
                         formatted_max = self._format_metric_value(cluster_max, unit)
                         
                         metrics_overview.append({
-                            'Metric': title.replace('_', ' ').title(),
+                            'Metric': display_title,
                             'Unit': unit,
                             'Cluster Avg': formatted_avg,
                             'Cluster Max': formatted_max,
@@ -70,7 +92,7 @@ class generalInfoELT(utilityELT):
                         pod_performance.append({
                             'Pod': self.truncate_text(pod_name, max_length=60),
                             'Node': self.truncate_node_name(pod_data.get('node', 'unknown')),
-                            'Metric': title.replace('_', ' ').title(),
+                            'Metric': display_title,
                             'Avg': formatted_avg,
                             'Max': formatted_max,
                             'Count': pod_data.get('count', 0)

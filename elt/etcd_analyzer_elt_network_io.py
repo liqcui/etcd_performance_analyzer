@@ -210,9 +210,10 @@ class networkIOELT(utilityELT):
                     
                     dataframes['network_overview'] = overview_df
             
-            # Pod metrics table
-            if structured_data.get('pod_metrics'):
-                pod_df = pd.DataFrame(structured_data['pod_metrics'])
+            # Pod metrics table (supports either key)
+            pod_metrics_list = structured_data.get('pod_metrics') or structured_data.get('container_metrics')
+            if pod_metrics_list:
+                pod_df = pd.DataFrame(pod_metrics_list)
                 if not pod_df.empty:
                     # Format values for display
                     pod_df['avg_formatted'] = pod_df.apply(lambda row: 
@@ -221,7 +222,7 @@ class networkIOELT(utilityELT):
                         self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
                     
                     # Identify top performers
-                    top_indices = self.identify_top_values(structured_data['pod_metrics'], 'avg_value')
+                    top_indices = self.identify_top_values(pod_metrics_list, 'avg_value')
                     for idx in top_indices:
                         if idx < len(pod_df):
                             pod_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
@@ -280,57 +281,58 @@ class networkIOELT(utilityELT):
                 if not df.empty:
                     df_display = df[['metric_name', 'category', 'avg_formatted', 'max_formatted', 'unit']].copy()
                     df_display.columns = ['Metric', 'Category', 'Avg Usage', 'Max Usage', 'Unit']
-                    html_tables['network_overview'] = self.create_html_table(df_display, 'network_overview')
+                    html_tables['metrics_overview'] = self.create_html_table(df_display, 'Network Metrics Overview')
             
-            # Metrics overview table (legacy compatibility)
-            if 'metrics_overview' in dataframes:
-                df = dataframes['metrics_overview'].copy()
-                if not df.empty:
-                    # Select and rename columns
-                    columns_map = {
-                        'category': 'Category',
-                        'total_metrics': 'Metrics',
-                        'total_pods': 'Pods',
-                        'total_nodes': 'Nodes', 
-                        'avg_throughput_mbps': 'Avg Throughput (Mbps)',
-                        'avg_utilization_mbps': 'Avg Utilization (Mbps)',
-                        'active_streams': 'Active Streams',
-                        'stream_health': 'Health',
-                        'status': 'Status'
-                    }
-                    
-                    available_cols = [col for col in columns_map.keys() if col in df.columns]
-                    df_display = df[available_cols].copy()
-                    df_display.columns = [columns_map[col] for col in available_cols]
-                    
-                    html_tables['metrics_overview'] = self.create_html_table(df_display, 'metrics_overview')
-            
-            # Container/Pod metrics table
+            # Container/Pod metrics table (title-free)
             if 'container_metrics' in dataframes:
                 df = dataframes['container_metrics'].copy()
                 if not df.empty:
-                    df_display = df[['metric_name', 'pod_name', 'avg_formatted', 'max_formatted', 'unit']].copy()
-                    df_display.columns = ['Metric', 'Pod', 'Avg Usage', 'Max Usage', 'Unit']
-                    html_tables['container_metrics'] = self.create_html_table(df_display, 'container_metrics')
+                    # Prefer concise columns for readability
+                    cols = [c for c in ['pod_name', 'node_name', 'avg_formatted', 'max_formatted', 'unit'] if c in df.columns]
+                    df_display = df[cols].copy()
+                    rename = {
+                        'pod_name': 'Pod Name',
+                        'node_name': 'Node',
+                        'avg_formatted': 'Average',
+                        'max_formatted': 'Maximum',
+                        'unit': 'Unit'
+                    }
+                    df_display.rename(columns=rename, inplace=True)
+                    html_tables['container_metrics'] = self.create_html_table(df_display, 'Container Network Usage')
             
-            # Node performance table
+            # Node performance table (title-free)
             if 'node_performance' in dataframes:
                 df = dataframes['node_performance'].copy()
                 if not df.empty:
-                    df_display = df[['metric_name', 'node_name', 'avg_formatted', 'max_formatted', 'unit']].copy()
-                    df_display.columns = ['Metric', 'Node', 'Avg Usage', 'Max Usage', 'Unit']
-                    html_tables['node_performance'] = self.create_html_table(df_display, 'node_performance')
+                    cols = [c for c in ['node_name', 'avg_formatted', 'max_formatted', 'unit'] if c in df.columns]
+                    df_display = df[cols].copy()
+                    rename = {
+                        'node_name': 'Node Name',
+                        'avg_formatted': 'Average',
+                        'max_formatted': 'Maximum',
+                        'unit': 'Unit'
+                    }
+                    df_display.rename(columns=rename, inplace=True)
+                    html_tables['node_performance'] = self.create_html_table(df_display, 'Node Network Usage')
             
-            # gRPC streams table
+            # Cluster metrics (gRPC stream) table (title-free)
             if 'grpc_streams' in dataframes:
                 df = dataframes['grpc_streams'].copy()
                 if not df.empty:
-                    df_display = df[['metric_name', 'avg_formatted', 'max_formatted', 'latest_formatted', 'unit']].copy()
-                    df_display.columns = ['Metric', 'Avg', 'Max', 'Current', 'Unit']
-                    html_tables['grpc_streams'] = self.create_html_table(df_display, 'grpc_streams')
-                    
+                    cols = [c for c in ['latest_formatted', 'avg_formatted', 'max_formatted', 'unit'] if c in df.columns]
+                    df_display = df[cols].copy()
+                    rename = {
+                        'latest_formatted': 'Current Count',
+                        'avg_formatted': 'Average',
+                        'max_formatted': 'Maximum',
+                        'unit': 'Unit'
+                    }
+                    df_display.rename(columns=rename, inplace=True)
+                    html_tables['grpc_streams'] = self.create_html_table(df_display, 'gRPC Active Stream')
+            
         except Exception as e:
             logger.error(f"Failed to generate HTML tables: {e}")
+            return {}
         
         return html_tables
     

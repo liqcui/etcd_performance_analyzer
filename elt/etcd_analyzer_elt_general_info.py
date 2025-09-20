@@ -143,9 +143,17 @@ class generalInfoELT(utilityELT):
                 if isinstance(data, list) and data:
                     df = pd.DataFrame(data)
                     if not df.empty:
-                        # Apply column limiting
-                        df_limited = self.limit_dataframe_columns(df, table_name=key)
-                        dataframes[key] = df_limited
+                        # For pod_performance: remove Node column and order columns as requested
+                        if key == 'pod_performance':
+                            desired_order = ['Metric', 'Pod', 'Avg', 'Max', 'Count']
+                            existing_cols = [c for c in desired_order if c in df.columns]
+                            if existing_cols:
+                                df = df[existing_cols]
+                            dataframes[key] = df
+                        else:
+                            # Apply column limiting for other tables
+                            df_limited = self.limit_dataframe_columns(df, table_name=key)
+                            dataframes[key] = df_limited
             
             return dataframes
             

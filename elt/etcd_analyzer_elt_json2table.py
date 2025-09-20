@@ -644,14 +644,14 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
                 table_title = priority_table.replace('_', ' ').title()
                 
                 # Special titles for different data types
-                if data_type == 'network_io':
+               if data_type == 'network_io':
                     title_mapping = {
                         'metrics_overview': 'Network Metrics Overview',
                         'container_metrics': 'Container Network Usage',
                         'node_performance': 'Node Network Usage',
                         'grpc_streams': 'gRPC Active Stream'
                     }
-                    table_title = title_mapping.get(priority_table, table_title)               
+                    table_title = title_mapping.get(priority_table, table_title)              
                 elif data_type == 'disk_io':
                     title_mapping = {
                         'metrics_overview': 'Performance Metrics Overview',
@@ -709,8 +709,6 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
                         'page_fault_metrics': 'Page Fault Metrics'
                     }
                     table_title = title_mapping.get(priority_table, table_title)
-
-
 
                 output_parts.append(f"<h5 class='mt-3'>{table_title}</h5>")
                 output_parts.append(html_tables[priority_table])

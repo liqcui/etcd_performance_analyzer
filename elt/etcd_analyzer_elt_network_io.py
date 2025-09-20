@@ -448,7 +448,6 @@ class networkIOELT(utilityELT):
             logger.error(f"Failed to generate network I/O summary: {e}")
             return f"Network I/O summary generation failed: {str(e)}"
 
-    # Helper methods for formatting (using inherited methods from utilityELT)
     def format_bits_per_second(self, bits_per_sec: float) -> str:
         """Format bits per second to readable units"""
         return self.format_network_bits_per_second(bits_per_sec)

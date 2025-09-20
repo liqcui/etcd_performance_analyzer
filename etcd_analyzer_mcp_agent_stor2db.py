@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ETCD Analyzer MCP Agent with LangGraph StateGraph and DuckDB ELT
-Updated version with Backend Commit support
+Updated version with General Info support
 """
 
 import asyncio
@@ -23,6 +23,7 @@ from storage.etcd_analyzer_stor_disk_io import DiskIOStorELT, print_disk_io_summ
 from storage.etcd_analyzer_stor_network_io import NetworkIOStorELT, print_network_io_summary_tables
 from storage.etcd_analyzer_stor_backend_commit import BackendCommitStorELT, print_backend_commit_summary_tables
 from storage.etcd_analyzer_stor_compact_defrag import CompactDefragStorELT, print_compact_defrag_summary_tables
+from storage.etcd_analyzer_stor_general_info import GeneralInfoStorELT, print_general_info_summary_tables
 
 # Set up logging
 logging.basicConfig(
@@ -31,7 +32,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Update the AgentState TypedDict
+# Update the AgentState TypedDict to include general info
 class AgentState(TypedDict):
     """State for the ETCD Analyzer Agent"""
     messages: List[BaseMessage]
@@ -42,6 +43,7 @@ class AgentState(TypedDict):
     network_io_data: Optional[Dict[str, Any]]
     backend_commit_data: Optional[Dict[str, Any]]
     compact_defrag_data: Optional[Dict[str, Any]]
+    general_info_data: Optional[Dict[str, Any]]  # Added general info data
     duration: str
     start_time: Optional[str]
     end_time: Optional[str]
@@ -51,7 +53,7 @@ class AgentState(TypedDict):
     error: Optional[str]
 
 class ETCDAnalyzerStorDBMCPAgent:
-    """ETCD Analyzer Agent using LangGraph StateGraph and MCP integration with Backend Commit support"""
+    """ETCD Analyzer Agent using LangGraph StateGraph and MCP integration with General Info support"""
     def __init__(self, mcp_server_url: str = "http://localhost:8000", db_path: str = "etcd_analyzer.duckdb"):
         self.mcp_server_url = mcp_server_url
         self.db_path = db_path
@@ -61,20 +63,22 @@ class ETCDAnalyzerStorDBMCPAgent:
         self.network_io_store = NetworkIOStorELT(db_path)
         self.backend_commit_store = BackendCommitStorELT(db_path)
         self.compact_defrag_store = CompactDefragStorELT(db_path)
+        self.general_info_store = GeneralInfoStorELT(db_path)  # Added general info store
         self.graph = self._create_graph()
 
     def _create_graph(self) -> StateGraph:
-        """Create the LangGraph StateGraph with Compact Defrag workflow"""
+        """Create the LangGraph StateGraph with General Info workflow"""
         workflow = StateGraph(AgentState)
         
         # Add nodes
         workflow.add_node("initialize", self._initialize_node)
         workflow.add_node("collect_cluster_info", self._collect_cluster_info_node)
+        workflow.add_node("collect_general_info", self._collect_general_info_node)  # Added general info node
         workflow.add_node("collect_wal_fsync", self._collect_wal_fsync_node)
         workflow.add_node("collect_disk_io", self._collect_disk_io_node)
         workflow.add_node("collect_network_io", self._collect_network_io_node)
         workflow.add_node("collect_backend_commit", self._collect_backend_commit_node)
-        workflow.add_node("collect_compact_defrag", self._collect_compact_defrag_node)  # Added
+        workflow.add_node("collect_compact_defrag", self._collect_compact_defrag_node)
         workflow.add_node("store_data", self._store_data_node)
         workflow.add_node("finalize", self._finalize_node)
         workflow.add_node("handle_error", self._handle_error_node)
@@ -82,6 +86,15 @@ class ETCDAnalyzerStorDBMCPAgent:
         # Add conditional edges
         workflow.add_conditional_edges(
             "collect_cluster_info",
+            self._should_handle_error,
+            {
+                "error": "handle_error",
+                "continue": "collect_general_info"  # Updated flow
+            }
+        )
+        
+        workflow.add_conditional_edges(
+            "collect_general_info",  # Added general info conditional edges
             self._should_handle_error,
             {
                 "error": "handle_error",
@@ -121,12 +134,12 @@ class ETCDAnalyzerStorDBMCPAgent:
             self._should_handle_error,
             {
                 "error": "handle_error",
-                "continue": "collect_compact_defrag"  # Updated
+                "continue": "collect_compact_defrag"
             }
         )
         
         workflow.add_conditional_edges(
-            "collect_compact_defrag",  # Added
+            "collect_compact_defrag",
             self._should_handle_error,
             {
                 "error": "handle_error",
@@ -216,6 +229,42 @@ class ETCDAnalyzerStorDBMCPAgent:
             return {
                 **state,
                 "error": error_msg,
+                "messages": state["messages"] + [AIMessage(content=error_msg)]
+            }
+
+    async def _collect_general_info_node(self, state: AgentState) -> AgentState:
+        """Collect general info metrics via MCP"""
+        try:
+            logger.info("Collecting general info metrics...")
+            
+            general_info_params = {"duration": state["duration"]}
+            general_info_data = await self._call_mcp_tool("get_etcd_general_info", general_info_params)
+            
+            if general_info_data.get("status") == "success":
+                return {
+                    **state,
+                    "general_info_data": general_info_data,
+                    "messages": state["messages"] + [
+                        AIMessage(content="Successfully collected general info metrics")
+                    ]
+                }
+            else:
+                error_msg = f"Failed to collect general info metrics: {general_info_data.get('error')}"
+                logger.warning(error_msg)
+                # Don't treat as fatal error, continue without general info data
+                return {
+                    **state,
+                    "general_info_data": None,
+                    "messages": state["messages"] + [AIMessage(content=error_msg)]
+                }
+                
+        except Exception as e:
+            error_msg = f"Error collecting general info metrics: {str(e)}"
+            logger.error(error_msg)
+            # Don't treat as fatal error, continue without general info data
+            return {
+                **state,
+                "general_info_data": None,
                 "messages": state["messages"] + [AIMessage(content=error_msg)]
             }
     
@@ -400,7 +449,7 @@ class ETCDAnalyzerStorDBMCPAgent:
             }
 
     async def _store_data_node(self, state: AgentState) -> AgentState:
-        """Store collected data in DuckDB including compact defrag metrics"""
+        """Store collected data in DuckDB including general info metrics"""
         try:
             logger.info("Storing data in DuckDB...")
             storage_results = {}
@@ -417,6 +466,27 @@ class ETCDAnalyzerStorDBMCPAgent:
                 except Exception as e:
                     storage_results["cluster_info"] = f"error: {str(e)}"
                     logger.error(f"Failed to store cluster info: {str(e)}")
+            
+            # Store general info data (NEW)
+            if state.get("general_info_data"):
+                try:
+                    general_info_result = await self.general_info_store.store_general_info_metrics(
+                        state["testing_id"], 
+                        state["general_info_data"]
+                    )
+                    if general_info_result.get("status") == "success":
+                        storage_results["general_info"] = "success"
+                        storage_results["general_info_details"] = general_info_result.get("storage_results", {})
+                        # Print the summary tables in terminal
+                        if "summary_report" in general_info_result:
+                            print_general_info_summary_tables(general_info_result["summary_report"])
+                        logger.info("Stored general info metrics in DuckDB")
+                    else:
+                        storage_results["general_info"] = f"error: {general_info_result.get('error')}"
+                        logger.error(f"Failed to store general info data: {general_info_result.get('error')}")
+                except Exception as e:
+                    storage_results["general_info"] = f"error: {str(e)}"
+                    logger.error(f"Failed to store general info data: {str(e)}")
             
             # Store WAL fsync data
             if state.get("wal_fsync_data"):
@@ -505,7 +575,7 @@ class ETCDAnalyzerStorDBMCPAgent:
                     storage_results["backend_commit"] = f"error: {str(e)}"
                     logger.error(f"Failed to store backend commit data: {str(e)}")
             
-            # Store compact defrag data (NEW)
+            # Store compact defrag data
             if state.get("compact_defrag_data"):
                 try:
                     compact_defrag_result = await self.compact_defrag_store.store_compact_defrag_metrics(
@@ -545,12 +615,19 @@ class ETCDAnalyzerStorDBMCPAgent:
             }
 
     async def _finalize_node(self, state: AgentState) -> AgentState:
-        """Finalize results with all metrics analysis summaries including compact defrag"""
+        """Finalize results with all metrics analysis summaries including general info"""
         try:
             # Get cluster analysis summary
             cluster_summary = None
             if state.get("cluster_info"):
                 cluster_summary = await self.cluster_store.get_cluster_analysis_summary(
+                    state["testing_id"]
+                )
+            
+            # Get general info summary (NEW)
+            general_info_summary = None
+            if state.get("general_info_data"):
+                general_info_summary = await self.general_info_store.get_general_info_summary(
                     state["testing_id"]
                 )
             
@@ -582,7 +659,7 @@ class ETCDAnalyzerStorDBMCPAgent:
                     state["testing_id"]
                 )
             
-            # Get compact defrag summary (NEW)
+            # Get compact defrag summary
             compact_defrag_summary = None
             if state.get("compact_defrag_data"):
                 compact_defrag_summary = await self.compact_defrag_store.get_compact_defrag_summary(
@@ -596,11 +673,12 @@ class ETCDAnalyzerStorDBMCPAgent:
                 "start_time": state.get("start_time"),
                 "end_time": state.get("end_time"),
                 "cluster_summary": cluster_summary,
+                "general_info_summary": general_info_summary,  # Added general info summary
                 "wal_fsync_summary": wal_fsync_summary,
                 "disk_io_summary": disk_io_summary,
                 "network_io_summary": network_io_summary,
                 "backend_commit_summary": backend_commit_summary,
-                "compact_defrag_summary": compact_defrag_summary,  # Added compact defrag summary
+                "compact_defrag_summary": compact_defrag_summary,
                 "storage_results": state.get("results", {}).get("storage_results", {}),
                 "status": "success"
             }
@@ -657,12 +735,20 @@ class ETCDAnalyzerStorDBMCPAgent:
             raise
     
     async def _print_table_info(self):
-        """Print table information in the terminal including compact defrag tables"""
+        """Print table information in the terminal including general info tables"""
         try:
             # Print cluster info tables
             cluster_table_info = await self.cluster_store.get_table_info()
             logger.info("=== Cluster Info DuckDB Tables ===")
             for table_name, info in cluster_table_info.items():
+                logger.info(f"Table: {table_name}")
+                logger.info(f"Columns: {info}")
+                logger.info("-" * 50)
+            
+            # Print general info tables (NEW)
+            general_info_table_info = await self.general_info_store.get_table_info()
+            logger.info("=== General Info DuckDB Tables ===")
+            for table_name, info in general_info_table_info.items():
                 logger.info(f"Table: {table_name}")
                 logger.info(f"Columns: {info}")
                 logger.info("-" * 50)
@@ -699,7 +785,7 @@ class ETCDAnalyzerStorDBMCPAgent:
                 logger.info(f"Columns: {info}")
                 logger.info("-" * 50)
             
-            # Print compact defrag tables (NEW)
+            # Print compact defrag tables
             compact_defrag_table_info = await self.compact_defrag_store.get_table_info()
             logger.info("=== Compact Defrag DuckDB Tables ===")
             for table_name, info in compact_defrag_table_info.items():
@@ -711,7 +797,7 @@ class ETCDAnalyzerStorDBMCPAgent:
             logger.warning(f"Could not print table info: {str(e)}")
 
     async def analyze(self, query_params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        """Run the complete analysis workflow including compact defrag"""
+        """Run the complete analysis workflow including general info"""
         initial_state = AgentState(
             messages=[HumanMessage(content="Start ETCD analysis")],
             cluster_info=None,
@@ -720,7 +806,8 @@ class ETCDAnalyzerStorDBMCPAgent:
             disk_io_data=None,
             network_io_data=None,
             backend_commit_data=None,
-            compact_defrag_data=None,  # Added compact defrag data initialization
+            compact_defrag_data=None,
+            general_info_data=None,  # Added general info data initialization
             duration="1h",
             start_time=None,
             end_time=None,
@@ -743,27 +830,29 @@ class ETCDAnalyzerStorDBMCPAgent:
             }
 
     async def query_by_duration(self, duration: str = "1h", print_table_info: bool = False, query_stored_only: bool = False) -> Dict[str, Any]:
-        """Query cluster/WAL fsync/disk I/O/network I/O/backend commit/compact defrag data by duration.
+        """Query all metrics data by duration including general info.
         If query_stored_only is True, returns results from DuckDB without collecting new data.
         """
         if query_stored_only:
             try:
                 cluster = await self.cluster_store.query_cluster_info_by_duration(duration)
+                general_info = await self.general_info_store.query_general_info_data_by_duration(duration)  # Added general info query
                 wal = await self.wal_fsync_store.query_wal_fsync_data_by_duration(duration)
                 disk = await self.disk_io_store.query_disk_io_data_by_duration(duration)
                 network = await self.network_io_store.query_network_io_data_by_duration(duration)
                 backend_commit = await self.backend_commit_store.query_backend_commit_data_by_duration(duration)
-                compact_defrag = await self.compact_defrag_store.query_compact_defrag_data_by_duration(duration)  # Added compact defrag query
+                compact_defrag = await self.compact_defrag_store.query_compact_defrag_data_by_duration(duration)
                 return {
                     "status": "success",
                     "query_mode": "stored_only",
                     "duration": duration,
                     "cluster_info": cluster,
+                    "general_info": general_info,  # Added general info results
                     "wal_fsync": wal,
                     "disk_io": disk,
                     "network_io": network,
                     "backend_commit": backend_commit,
-                    "compact_defrag": compact_defrag,  # Added compact defrag results
+                    "compact_defrag": compact_defrag,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             except Exception as e:
@@ -782,28 +871,30 @@ class ETCDAnalyzerStorDBMCPAgent:
         return result
 
     async def query_by_time_range(self, start_time: str, end_time: str, print_table_info: bool = False, query_stored_only: bool = False) -> Dict[str, Any]:
-        """Query cluster/WAL fsync/disk I/O/network I/O/backend commit/compact defrag data by time range (UTC timezone).
+        """Query all metrics data by time range (UTC timezone) including general info.
         If query_stored_only is True, returns results from DuckDB without collecting new data.
         """
         if query_stored_only:
             try:
                 cluster = await self.cluster_store.query_cluster_info_by_time_range(start_time, end_time)
+                general_info = await self.general_info_store.query_general_info_data_by_time_range(start_time, end_time)  # Added general info query
                 wal = await self.wal_fsync_store.query_wal_fsync_data_by_time_range(start_time, end_time)
                 disk = await self.disk_io_store.query_disk_io_data_by_time_range(start_time, end_time)
                 network = await self.network_io_store.query_network_io_data_by_time_range(start_time, end_time)
                 backend_commit = await self.backend_commit_store.query_backend_commit_data_by_time_range(start_time, end_time)
-                compact_defrag = await self.compact_defrag_store.query_compact_defrag_data_by_time_range(start_time, end_time)  # Added compact defrag query
+                compact_defrag = await self.compact_defrag_store.query_compact_defrag_data_by_time_range(start_time, end_time)
                 return {
                     "status": "success",
                     "query_mode": "stored_only",
                     "start_time": start_time,
                     "end_time": end_time,
                     "cluster_info": cluster,
+                    "general_info": general_info,  # Added general info results
                     "wal_fsync": wal,
                     "disk_io": disk,
                     "network_io": network,
                     "backend_commit": backend_commit,
-                    "compact_defrag": compact_defrag,  # Added compact defrag results
+                    "compact_defrag": compact_defrag,
                     "timestamp": datetime.now(timezone.utc).isoformat()
                 }
             except Exception as e:
@@ -822,48 +913,48 @@ class ETCDAnalyzerStorDBMCPAgent:
         return result
 
 async def main():
-    """Example usage of the ETCD Analyzer MCP Agent with Compact Defrag support"""
+    """Example usage of the ETCD Analyzer MCP Agent with General Info support"""
     
     # Initialize the agent
     agent = ETCDAnalyzerStorDBMCPAgent()
     
     try:
-        # Example 1: Collect and store current cluster, WAL fsync, disk I/O, network I/O, backend commit, and compact defrag metrics
-        logger.info("=== Collect Current Metrics (All Types Including Compact Defrag) ===")
+        # Example 1: Collect and store current cluster and all metrics including general info
+        logger.info("=== Collect Current Metrics (All Types Including General Info) ===")
         result1 = await agent.query_by_duration(duration="1h", print_table_info=True)
-        #logger.info(f"Current analysis result: {json.dumps(result1, indent=2, default=str)}")
+        logger.info(f"Current analysis result: {json.dumps(result1, indent=2, default=str)}")
         
-        # Example 2: Query by specific time range (UTC) - collect new data including compact defrag
+        # Example 2: Query by specific time range (UTC) - collect new data including general info
         logger.info("=== Query by Time Range (UTC) - New Data Collection ===")
-        start_time = "2025-09-18T14:00:00Z"
-        end_time = "2025-09-18T15:00:00Z" 
+        start_time = "2025-09-20T06:00:00Z"
+        end_time = "2025-09-20T07:00:00Z" 
         result2 = await agent.query_by_time_range(start_time, end_time)
-        # logger.info(f"Time range query result: {json.dumps(result2, indent=2, default=str)}")
+        logger.info(f"Time range query result: {json.dumps(result2, indent=2, default=str)}")
         
-        # Example 3: Query stored data by duration (all metrics including compact defrag)
+        # Example 3: Query stored data by duration (all metrics including general info)
         logger.info("=== Query Stored Data (Last 2 Hours) - All Metrics ===")
         stored_result = await agent.query_by_duration(duration="2h", query_stored_only=True)
-        # logger.info(f"Stored data query result: {json.dumps(stored_result, indent=2, default=str)}")
+        logger.info(f"Stored data query result: {json.dumps(stored_result, indent=2, default=str)}")
         
-        # Example 4: Query stored data by time range including compact defrag
-        logger.info("=== Query Stored Data by Time Range - Including Compact Defrag ===")
+        # Example 4: Query stored data by time range including general info
+        logger.info("=== Query Stored Data by Time Range - Including General Info ===")
         stored_time_result = await agent.query_by_time_range(
-            start_time="2025-09-18T14:00:00Z", 
-            end_time="2025-09-18T16:00:00Z",
+            start_time="2025-09-20T06:00:00Z", 
+            end_time="2025-09-20T08:00:00Z",
             query_stored_only=True
         )
-        # logger.info(f"Stored time range result: {json.dumps(stored_time_result, indent=2, default=str)}")
+        logger.info(f"Stored time range result: {json.dumps(stored_time_result, indent=2, default=str)}")
         
-        # Example 5: Collect new data with different duration including compact defrag metrics
+        # Example 5: Collect new data with different duration including general info metrics
         logger.info("=== Collect 30-minute metrics (All Types) ===")
         result5 = await agent.query_by_duration(duration="30m")
-        # logger.info(f"30-minute analysis result: {json.dumps(result5, indent=2, default=str)}")
+        logger.info(f"30-minute analysis result: {json.dumps(result5, indent=2, default=str)}")
         
-        # Example 6: Test compact defrag specific functionality
-        logger.info("=== Compact Defrag Specific Testing ===")
-        if result5.get("status") == "success" and result5.get("compact_defrag_summary"):
-            compact_defrag_summary = result5["compact_defrag_summary"]
-            # logger.info(f"Compact defrag summary: {json.dumps(compact_defrag_summary, indent=2, default=str)}")
+        # Example 6: Test general info specific functionality
+        logger.info("=== General Info Specific Testing ===")
+        if result5.get("status") == "success" and result5.get("general_info_summary"):
+            general_info_summary = result5["general_info_summary"]
+            logger.info(f"General info summary: {json.dumps(general_info_summary, indent=2, default=str)}")
         
     except Exception as e:
         logger.error(f"Example execution failed: {str(e)}")

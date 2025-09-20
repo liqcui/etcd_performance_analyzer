@@ -596,8 +596,7 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
         # Priority for network I/O
         if data_type == 'network_io':
             table_priority = [
-                'metrics_overview', 'container_metrics', 'node_performance', 
-                'peer_metrics', 'grpc_streams', 'cluster_metrics'
+                'metrics_overview', 'container_metrics', 'node_performance', 'grpc_streams'
             ]
         # Priority for disk I/O
         elif data_type == 'disk_io':
@@ -645,16 +644,14 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
                 table_title = priority_table.replace('_', ' ').title()
                 
                 # Special titles for different data types
-                if data_type == 'network_io':  # Add this block
+                if data_type == 'network_io':
                     title_mapping = {
                         'metrics_overview': 'Network Metrics Overview',
-                        'container_metrics': 'Container Network Performance',
-                        'node_performance': 'Node Network Performance',
-                        'peer_metrics': 'Peer Network Metrics',
-                        'grpc_streams': 'gRPC Stream Metrics',
-                        'cluster_metrics': 'Cluster Network Metrics'
+                        'container_metrics': 'Container Network Usage',
+                        'node_performance': 'Node Network Usage',
+                        'grpc_streams': 'gRPC Active Stream'
                     }
-                    table_title = title_mapping.get(priority_table, table_title)                
+                    table_title = title_mapping.get(priority_table, table_title)               
                 elif data_type == 'disk_io':
                     title_mapping = {
                         'metrics_overview': 'Performance Metrics Overview',

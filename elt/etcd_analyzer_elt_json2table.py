@@ -644,7 +644,7 @@ def json_to_html_table(json_data: Union[Dict[str, Any], str], compact: bool = Tr
                 table_title = priority_table.replace('_', ' ').title()
                 
                 # Special titles for different data types
-               if data_type == 'network_io':
+                if data_type == 'network_io':
                     title_mapping = {
                         'metrics_overview': 'Network Metrics Overview',
                         'container_metrics': 'Container Network Usage',

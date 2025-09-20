@@ -68,7 +68,7 @@ class generalInfoELT(utilityELT):
                         formatted_max = self._format_metric_value(pod_data.get('max', 0), unit)
                         
                         pod_performance.append({
-                            'Pod': self.truncate_node_name(pod_name),
+                            'Pod': self.truncate_text(pod_name, max_length=60),
                             'Node': self.truncate_node_name(pod_data.get('node', 'unknown')),
                             'Metric': title.replace('_', ' ').title(),
                             'Avg': formatted_avg,

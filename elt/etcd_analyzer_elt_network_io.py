@@ -12,501 +12,370 @@ from .etcd_analyzer_elt_utility import utilityELT
 logger = logging.getLogger(__name__)
 
 class networkIOELT(utilityELT):
-    """Network I/O Extract, Load, Transform class"""
+    """Extract, Load, Transform class for Network I/O data"""
     
     def __init__(self):
         super().__init__()
-
+    
     def extract_network_io(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Extract network I/O data from tool results"""
+        """Extract network I/O metrics data"""
         try:
-            # Handle nested data structure from actual JSON format
-            # The structure is: data.data.data.{container_metrics, node_metrics, cluster_metrics}
-            if 'data' in data and 'data' in data['data'] and 'data' in data['data']['data']:
-                network_data = data['data']['data']['data']
-            elif 'data' in data and 'data' in data['data']:
-                network_data = data['data']['data']
-            elif 'data' in data:
-                network_data = data['data']
+            # Handle nested data structure
+            if 'data' in data and isinstance(data['data'], dict):
+                metrics_data = data['data']
             else:
-                network_data = data
-
-            # Get top level metadata
-            top_data = data.get('data', {}).get('data', {})
-            extracted = {
-                'status': top_data.get('status', 'unknown'),
-                'collection_time': top_data.get('timestamp', datetime.now().isoformat()),
-                'duration': top_data.get('duration', '1h'),
-                'container_metrics': [],
-                'node_metrics': [],
-                'cluster_metrics': []
+                metrics_data = data
+            
+            # Extract different levels of metrics
+            pods_metrics = metrics_data.get('pods_metrics', {})
+            # Fallback to container_metrics for backward compatibility
+            if not pods_metrics and 'container_metrics' in metrics_data:
+                pods_metrics = metrics_data['container_metrics']
+            
+            node_metrics = metrics_data.get('node_metrics', {})
+            cluster_metrics = metrics_data.get('cluster_metrics', {})
+            
+            # Extract pod-level metrics
+            pod_data = []
+            for metric_name, metric_info in pods_metrics.items():
+                if metric_info.get('status') == 'success':
+                    unit = metric_info.get('unit', 'unknown')
+                    for pod_name, pod_stats in metric_info.get('pods', {}).items():
+                        avg_value = pod_stats.get('avg', 0) or 0
+                        max_value = pod_stats.get('max', 0) or 0
+                        node_name = pod_stats.get('node', 'unknown')
+                        
+                        pod_data.append({
+                            'metric_name': metric_name,
+                            'pod_name': pod_name,
+                            'node_name': node_name,
+                            'avg_value': float(avg_value),
+                            'max_value': float(max_value),
+                            'unit': unit
+                        })
+            
+            # Extract node-level metrics
+            node_data = []
+            for metric_name, metric_info in node_metrics.items():
+                if metric_info.get('status') == 'success':
+                    unit = metric_info.get('unit', 'unknown')
+                    for node_name, node_stats in metric_info.get('nodes', {}).items():
+                        avg_value = node_stats.get('avg', 0) or 0
+                        max_value = node_stats.get('max', 0) or 0
+                        device_count = node_stats.get('device_count', 0)
+                        
+                        node_data.append({
+                            'metric_name': metric_name,
+                            'node_name': node_name,
+                            'avg_value': float(avg_value),
+                            'max_value': float(max_value),
+                            'device_count': device_count,
+                            'unit': unit
+                        })
+            
+            # Extract cluster-level metrics
+            cluster_data = []
+            for metric_name, metric_info in cluster_metrics.items():
+                if metric_info.get('status') == 'success':
+                    unit = metric_info.get('unit', 'unknown')
+                    avg_value = metric_info.get('avg', 0) or 0
+                    max_value = metric_info.get('max', 0) or 0
+                    latest_value = metric_info.get('latest', 0) or 0
+                    
+                    cluster_data.append({
+                        'metric_name': metric_name,
+                        'avg_value': float(avg_value),
+                        'max_value': float(max_value),
+                        'latest_value': float(latest_value),
+                        'unit': unit
+                    })
+            
+            # Create network overview with top metrics
+            overview_data = self._create_network_overview(pod_data, node_data, cluster_data)
+            
+            return {
+                'pod_metrics': pod_data,
+                'node_metrics': node_data,
+                'cluster_metrics': cluster_data,
+                'overview': overview_data,
+                'timestamp': data.get('timestamp', datetime.now().isoformat()),
+                'duration': data.get('duration', 'unknown')
             }
-
-            # Process container metrics
-            container_data = network_data.get('container_metrics', {})
-            for metric_name, metric_info in container_data.items():
-                if metric_info.get('status') != 'success':
-                    continue
-                
-                pods_data = metric_info.get('pods', {})
-                for pod_name, pod_stats in pods_data.items():
-                    extracted['container_metrics'].append({
-                        'metric_name': metric_name,
-                        'title': metric_info.get('title', metric_name),
-                        'pod_name': pod_name,
-                        'avg_value': pod_stats.get('avg'),
-                        'max_value': pod_stats.get('max'),
-                        'unit': metric_info.get('unit', ''),
-                        'node_name': pod_stats.get('node', 'unknown')
-                    })
-
-            # Process node metrics
-            node_data = network_data.get('node_metrics', {})
-            for metric_name, metric_info in node_data.items():
-                if metric_info.get('status') != 'success':
-                    continue
-                
-                nodes_data = metric_info.get('nodes', {})
-                for node_name, node_stats in nodes_data.items():
-                    extracted['node_metrics'].append({
-                        'metric_name': metric_name,
-                        'title': metric_info.get('title', metric_name),
-                        'node_name': node_name,
-                        'avg_value': node_stats.get('avg'),
-                        'max_value': node_stats.get('max'),
-                        'unit': metric_info.get('unit', ''),
-                        'device_count': node_stats.get('device_count', 0)
-                    })
-
-            # Process cluster metrics
-            cluster_data = network_data.get('cluster_metrics', {})
-            for metric_name, metric_info in cluster_data.items():
-                if metric_info.get('status') != 'success':
-                    continue
-                
-                extracted['cluster_metrics'].append({
-                    'metric_name': metric_name,
-                    'title': metric_info.get('title', metric_name),
-                    'avg_value': metric_info.get('avg'),
-                    'max_value': metric_info.get('max'),
-                    'latest_value': metric_info.get('latest'),
-                    'unit': metric_info.get('unit', '')
-                })
-
-            return extracted
-
+            
         except Exception as e:
             logger.error(f"Failed to extract network I/O data: {e}")
             return {'error': str(e)}
- 
+    
+    def _create_network_overview(self, pod_data: List[Dict[str, Any]], node_data: List[Dict[str, Any]], 
+                                cluster_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Create network overview with top metrics summary"""
+        overview_data = []
+        
+        # Combine all metrics for top analysis
+        all_metrics = {}
+        
+        # Process pod metrics
+        for item in pod_data:
+            metric_name = item['metric_name']
+            if metric_name not in all_metrics:
+                all_metrics[metric_name] = {
+                    'avg_values': [],
+                    'max_values': [],
+                    'unit': item['unit'],
+                    'category': 'Pod Network'
+                }
+            all_metrics[metric_name]['avg_values'].append(item['avg_value'])
+            all_metrics[metric_name]['max_values'].append(item['max_value'])
+        
+        # Process node metrics
+        for item in node_data:
+            metric_name = item['metric_name']
+            if metric_name not in all_metrics:
+                all_metrics[metric_name] = {
+                    'avg_values': [],
+                    'max_values': [],
+                    'unit': item['unit'],
+                    'category': 'Node Network'
+                }
+            all_metrics[metric_name]['avg_values'].append(item['avg_value'])
+            all_metrics[metric_name]['max_values'].append(item['max_value'])
+        
+        # Process cluster metrics
+        for item in cluster_data:
+            metric_name = item['metric_name']
+            all_metrics[metric_name] = {
+                'avg_values': [item['avg_value']],
+                'max_values': [item['max_value']],
+                'unit': item['unit'],
+                'category': 'Cluster'
+            }
+        
+        # Create overview entries for each metric
+        for metric_name, metric_data in all_metrics.items():
+            avg_values = [v for v in metric_data['avg_values'] if v is not None and v > 0]
+            max_values = [v for v in metric_data['max_values'] if v is not None and v > 0]
+            
+            if avg_values or max_values:
+                # Calculate aggregated values
+                total_avg = sum(avg_values) if avg_values else 0
+                peak_max = max(max_values) if max_values else 0
+                
+                # Clean metric name for display
+                display_name = metric_name.replace('network_io_', '').replace('_', ' ').title()
+                if display_name.startswith('Container '):
+                    display_name = display_name.replace('Container ', 'Pod ')
+                elif display_name.startswith('Network Client '):
+                    display_name = display_name.replace('Network Client ', 'gRPC ')
+                elif display_name.startswith('Network Peer '):
+                    display_name = display_name.replace('Network Peer ', 'Peer ')
+                elif display_name.startswith('Grpc Active '):
+                    display_name = display_name.replace('Grpc Active ', 'Active ')
+                
+                overview_data.append({
+                    'metric_name': display_name,
+                    'category': metric_data['category'],
+                    'avg_usage': total_avg,
+                    'max_usage': peak_max,
+                    'unit': metric_data['unit'],
+                    'raw_metric_name': metric_name  # Keep for threshold checking
+                })
+        
+        # Sort by average usage (descending) to show top metrics first
+        overview_data.sort(key=lambda x: x['avg_usage'], reverse=True)
+        
+        return overview_data
+    
     def transform_to_dataframes(self, structured_data: Dict[str, Any]) -> Dict[str, pd.DataFrame]:
-        """Transform structured network I/O data into pandas DataFrames"""
+        """Transform structured data into pandas DataFrames"""
         dataframes = {}
         
         try:
-            # Create metrics overview table
-            overview_data = []
+            # Network overview table - shows top metrics with avg/max usage
+            if structured_data.get('overview'):
+                overview_df = pd.DataFrame(structured_data['overview'])
+                if not overview_df.empty:
+                    # Format values for display with highlighting
+                    overview_df['avg_formatted'] = overview_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['avg_usage'], row['raw_metric_name'], row['unit']), axis=1)
+                    overview_df['max_formatted'] = overview_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['max_usage'], row['raw_metric_name'], row['unit']), axis=1)
+                    
+                    # Identify top performers (top 3 by average usage)
+                    top_indices = list(range(min(3, len(overview_df))))  # Top 3 metrics
+                    for idx in top_indices:
+                        if idx < len(overview_df):
+                            overview_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
+                                overview_df.at[idx, 'avg_usage'], overview_df.at[idx, 'raw_metric_name'], 
+                                overview_df.at[idx, 'unit'], is_top=True)
+                    
+                    dataframes['network_overview'] = overview_df
             
-            container_metrics = structured_data.get('container_metrics', [])
-            node_metrics = structured_data.get('node_metrics', [])
-            cluster_metrics = structured_data.get('cluster_metrics', [])
+            # Pod metrics table
+            if structured_data.get('pod_metrics'):
+                pod_df = pd.DataFrame(structured_data['pod_metrics'])
+                if not pod_df.empty:
+                    # Format values for display
+                    pod_df['avg_formatted'] = pod_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
+                    pod_df['max_formatted'] = pod_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
+                    
+                    # Identify top performers
+                    top_indices = self.identify_top_values(structured_data['pod_metrics'], 'avg_value')
+                    for idx in top_indices:
+                        if idx < len(pod_df):
+                            pod_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
+                                pod_df.at[idx, 'avg_value'], pod_df.at[idx, 'metric_name'], 
+                                pod_df.at[idx, 'unit'], is_top=True)
+                    
+                    dataframes['container_metrics'] = pod_df
             
-            # Container metrics overview
-            if container_metrics:
-                etcd_pods = set(m['pod_name'] for m in container_metrics if 'etcd' in m['pod_name'].lower())
-                overview_data.append({
-                    'Metric Category': 'Container Network',
-                    'Description': f'{len(etcd_pods)} etcd pods monitored',
-                    'Key Metrics': 'RX/TX throughput, gRPC traffic',
-                    'Status': 'Active' if etcd_pods else 'No Data'
-                })
-                
-                # Add peak throughput info
-                rx_metrics = [m for m in container_metrics if 'network_rx' in m.get('metric_name', '')]
-                tx_metrics = [m for m in container_metrics if 'network_tx' in m.get('metric_name', '')]
-                
-                if rx_metrics:
-                    max_rx = max(rx_metrics, key=lambda x: x.get('avg_value', 0) or 0)
-                    peak_rx = self._format_network_value(max_rx['avg_value'], max_rx['unit'])
-                    overview_data.append({
-                        'Metric Category': 'Peak RX Throughput',
-                        'Description': f'Highest container network receive rate',
-                        'Key Metrics': peak_rx,
-                        'Status': 'Measured'
-                    })
-                
-                if tx_metrics:
-                    max_tx = max(tx_metrics, key=lambda x: x.get('avg_value', 0) or 0)
-                    peak_tx = self._format_network_value(max_tx['avg_value'], max_tx['unit'])
-                    overview_data.append({
-                        'Metric Category': 'Peak TX Throughput',
-                        'Description': f'Highest container network transmit rate',
-                        'Key Metrics': peak_tx,
-                        'Status': 'Measured'
-                    })
+            # Node metrics table
+            if structured_data.get('node_metrics'):
+                node_df = pd.DataFrame(structured_data['node_metrics'])
+                if not node_df.empty:
+                    # Format values for display
+                    node_df['avg_formatted'] = node_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
+                    node_df['max_formatted'] = node_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
+                    
+                    # Identify top performers
+                    top_indices = self.identify_top_values(structured_data['node_metrics'], 'avg_value')
+                    for idx in top_indices:
+                        if idx < len(node_df):
+                            node_df.at[idx, 'avg_formatted'] = self.highlight_network_io_values(
+                                node_df.at[idx, 'avg_value'], node_df.at[idx, 'metric_name'], 
+                                node_df.at[idx, 'unit'], is_top=True)
+                    
+                    dataframes['node_performance'] = node_df
             
-            # Node metrics overview
-            if node_metrics:
-                unique_nodes = set(m['node_name'] for m in node_metrics)
-                overview_data.append({
-                    'Metric Category': 'Node Network',
-                    'Description': f'{len(unique_nodes)} nodes monitored',
-                    'Key Metrics': 'Utilization, packets, drops',
-                    'Status': 'Active' if unique_nodes else 'No Data'
-                })
-                
-                # Check for packet drops
-                drop_metrics = [m for m in node_metrics if 'drop' in m.get('metric_name', '')]
-                if drop_metrics:
-                    total_drops = sum(m.get('avg_value', 0) or 0 for m in drop_metrics)
-                    drop_status = 'Warning' if total_drops > 0 else 'Normal'
-                    overview_data.append({
-                        'Metric Category': 'Packet Drops',
-                        'Description': 'Network packet loss monitoring',
-                        'Key Metrics': f'{total_drops:.2f} drops/sec average',
-                        'Status': drop_status
-                    })
-            
-            # Cluster metrics overview
-            if cluster_metrics:
-                overview_data.append({
-                    'Metric Category': 'gRPC Streams',
-                    'Description': 'Active client connections',
-                    'Key Metrics': 'Watch streams, lease streams',
-                    'Status': 'Monitored'
-                })
-                
-                # Add specific stream counts
-                for item in cluster_metrics:
-                    if 'watch_streams' in item['metric_name']:
-                        stream_count = self._format_network_value(item.get('latest_value'), item.get('unit', ''))
-                        overview_data.append({
-                            'Metric Category': 'Active Watch Streams',
-                            'Description': 'Current watch stream connections',
-                            'Key Metrics': stream_count,
-                            'Status': 'Active' if item.get('latest_value', 0) > 0 else 'Idle'
-                        })
-                    elif 'lease_streams' in item['metric_name']:
-                        lease_count = self._format_network_value(item.get('latest_value'), item.get('unit', ''))
-                        overview_data.append({
-                            'Metric Category': 'Active Lease Streams',
-                            'Description': 'Current lease stream connections',
-                            'Key Metrics': lease_count,
-                            'Status': 'Active' if item.get('latest_value', 0) > 0 else 'Idle'
-                        })
-            
-            if overview_data:
-                df_overview = pd.DataFrame(overview_data)
-                dataframes['metrics_overview'] = df_overview
-
-            # Create consolidated container metrics table (Container Network Usage)
-            container_metrics = structured_data.get('container_metrics', [])
-            if container_metrics:
-                # Group by pod name for cleaner display
-                pod_data = {}
-                for item in container_metrics:
-                    pod_name = item['pod_name']
-                    metric_type = item['metric_name']
+            # Cluster metrics table
+            if structured_data.get('cluster_metrics'):
+                cluster_df = pd.DataFrame(structured_data['cluster_metrics'])
+                if not cluster_df.empty:
+                    # Format values for display
+                    cluster_df['avg_formatted'] = cluster_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['avg_value'], row['metric_name'], row['unit']), axis=1)
+                    cluster_df['max_formatted'] = cluster_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['max_value'], row['metric_name'], row['unit']), axis=1)
+                    cluster_df['latest_formatted'] = cluster_df.apply(lambda row: 
+                        self.highlight_network_io_values(row['latest_value'], row['metric_name'], row['unit']), axis=1)
                     
-                    if pod_name not in pod_data:
-                        pod_data[pod_name] = {'pod_name': pod_name, 'node_name': item.get('node_name', 'unknown')}
+                    dataframes['grpc_streams'] = cluster_df
                     
-                    # Store values based on metric type
-                    if 'network_rx' in metric_type:
-                        pod_data[pod_name]['rx_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['rx_max'] = item.get('max_value')
-                        pod_data[pod_name]['rx_unit'] = item.get('unit', '')
-                    elif 'network_tx' in metric_type:
-                        pod_data[pod_name]['tx_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['tx_max'] = item.get('max_value')
-                        pod_data[pod_name]['tx_unit'] = item.get('unit', '')
-                    elif 'grpc_received' in metric_type:
-                        pod_data[pod_name]['grpc_rx_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['grpc_rx_max'] = item.get('max_value')
-                        pod_data[pod_name]['grpc_rx_unit'] = item.get('unit', '')
-                    elif 'grpc_sent' in metric_type:
-                        pod_data[pod_name]['grpc_tx_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['grpc_tx_max'] = item.get('max_value')
-                        pod_data[pod_name]['grpc_tx_unit'] = item.get('unit', '')
-                    elif 'peer_received' in metric_type:
-                        pod_data[pod_name]['peer_rx_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['peer_rx_max'] = item.get('max_value')
-                        pod_data[pod_name]['peer_rx_unit'] = item.get('unit', '')
-                    elif 'peer_sent' in metric_type:
-                        pod_data[pod_name]['peer_tx_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['peer_tx_max'] = item.get('max_value')
-                        pod_data[pod_name]['peer_tx_unit'] = item.get('unit', '')
-                    elif 'latency' in metric_type:
-                        pod_data[pod_name]['latency_avg'] = item.get('avg_value')
-                        pod_data[pod_name]['latency_max'] = item.get('max_value')
-                        pod_data[pod_name]['latency_unit'] = item.get('unit', '')
-                
-                # Create DataFrame for container metrics
-                container_rows = []
-                for pod_name, data in pod_data.items():
-                    row = {
-                        'Pod Name': self.truncate_node_name(pod_name, 35),
-                        'Node': self.truncate_node_name(data['node_name'], 25)
-                    }
-                    
-                    # Add network RX/TX if available
-                    if 'rx_avg' in data:
-                        row['Network RX (Avg)'] = self._format_network_value(data['rx_avg'], data.get('rx_unit', ''))
-                        row['Network TX (Avg)'] = self._format_network_value(data.get('tx_avg'), data.get('tx_unit', ''))
-                    
-                    # Add gRPC traffic if available
-                    if 'grpc_rx_avg' in data:
-                        row['gRPC RX (Avg)'] = self._format_network_value(data['grpc_rx_avg'], data.get('grpc_rx_unit', ''))
-                        row['gRPC TX (Avg)'] = self._format_network_value(data.get('grpc_tx_avg'), data.get('grpc_tx_unit', ''))
-                    
-                    # Add peer traffic if available
-                    if 'peer_rx_avg' in data:
-                        row['Peer RX (Avg)'] = self._format_network_value(data['peer_rx_avg'], data.get('peer_rx_unit', ''))
-                        row['Peer TX (Avg)'] = self._format_network_value(data.get('peer_tx_avg'), data.get('peer_tx_unit', ''))
-                    
-                    # Add latency if available
-                    if 'latency_avg' in data:
-                        row['Latency P99 (Avg)'] = self._format_network_value(data['latency_avg'], data.get('latency_unit', ''))
-                    
-                    container_rows.append(row)
-                
-                if container_rows:
-                    df_container = pd.DataFrame(container_rows)
-                    dataframes['container_metrics'] = df_container
-
-            # Create consolidated node metrics table (Node Network Usage)
-            node_metrics = structured_data.get('node_metrics', [])
-            if node_metrics:
-                # Group by node name for cleaner display
-                node_data = {}
-                for item in node_metrics:
-                    node_name = item['node_name']
-                    metric_type = item['metric_name']
-                    
-                    if node_name not in node_data:
-                        node_data[node_name] = {'node_name': node_name}
-                    
-                    # Store values based on metric type
-                    if 'rx_utilization' in metric_type:
-                        node_data[node_name]['rx_util_avg'] = item.get('avg_value')
-                        node_data[node_name]['rx_util_max'] = item.get('max_value')
-                        node_data[node_name]['rx_util_unit'] = item.get('unit', '')
-                    elif 'tx_utilization' in metric_type:
-                        node_data[node_name]['tx_util_avg'] = item.get('avg_value')
-                        node_data[node_name]['tx_util_max'] = item.get('max_value')
-                        node_data[node_name]['tx_util_unit'] = item.get('unit', '')
-                    elif 'rx_package' in metric_type:
-                        node_data[node_name]['rx_pkg_avg'] = item.get('avg_value')
-                        node_data[node_name]['rx_pkg_max'] = item.get('max_value')
-                        node_data[node_name]['rx_pkg_unit'] = item.get('unit', '')
-                    elif 'tx_package' in metric_type:
-                        node_data[node_name]['tx_pkg_avg'] = item.get('avg_value')
-                        node_data[node_name]['tx_pkg_max'] = item.get('max_value')
-                        node_data[node_name]['tx_pkg_unit'] = item.get('unit', '')
-                    elif 'rx_drop' in metric_type:
-                        node_data[node_name]['rx_drop_avg'] = item.get('avg_value')
-                        node_data[node_name]['rx_drop_max'] = item.get('max_value')
-                    elif 'tx_drop' in metric_type:
-                        node_data[node_name]['tx_drop_avg'] = item.get('avg_value')
-                        node_data[node_name]['tx_drop_max'] = item.get('max_value')
-                
-                # Create DataFrame for node metrics
-                node_rows = []
-                for node_name, data in node_data.items():
-                    row = {
-                        'Node Name': self.truncate_node_name(node_name, 30)
-                    }
-                    
-                    # Add utilization metrics with proper units
-                    if 'rx_util_avg' in data:
-                        row['RX Utilization (Avg)'] = self._format_network_value(data['rx_util_avg'], data.get('rx_util_unit', ''))
-                    if 'tx_util_avg' in data:
-                        row['TX Utilization (Avg)'] = self._format_network_value(data['tx_util_avg'], data.get('tx_util_unit', ''))
-                    
-                    # Add package metrics with proper units
-                    if 'rx_pkg_avg' in data:
-                        row['RX Packets (Avg)'] = self._format_network_value(data['rx_pkg_avg'], data.get('rx_pkg_unit', ''))
-                    if 'tx_pkg_avg' in data:
-                        row['TX Packets (Avg)'] = self._format_network_value(data['tx_pkg_avg'], data.get('tx_pkg_unit', ''))
-                    
-                    # Add drop metrics
-                    if 'rx_drop_avg' in data:
-                        row['RX Drops (Avg)'] = f"{data['rx_drop_avg']:.3f}" if data['rx_drop_avg'] > 0 else "0"
-                    if 'tx_drop_avg' in data:
-                        row['TX Drops (Avg)'] = f"{data['tx_drop_avg']:.3f}" if data['tx_drop_avg'] > 0 else "0"
-                    
-                    node_rows.append(row)
-                
-                if node_rows:
-                    df_node = pd.DataFrame(node_rows)
-                    dataframes['node_performance'] = df_node
-
-            # Create cluster metrics table (gRPC Active Stream)
-            cluster_metrics = structured_data.get('cluster_metrics', [])
-            if cluster_metrics:
-                cluster_rows = []
-                for item in cluster_metrics:
-                    metric_name = item['metric_name']
-                    if 'watch_streams' in metric_name:
-                        stream_type = 'Watch Streams'
-                    elif 'lease_streams' in metric_name:
-                        stream_type = 'Lease Streams'
-                    else:
-                        stream_type = metric_name.replace('network_io_grpc_active_', '').replace('_', ' ').title()
-                    
-                    row = {
-                        'Stream Type': stream_type,
-                        'Current Count': self._format_network_value(item.get('latest_value'), item.get('unit', '')),
-                        'Average': self._format_network_value(item.get('avg_value'), item.get('unit', '')),
-                        'Maximum': self._format_network_value(item.get('max_value'), item.get('unit', ''))
-                    }
-                    cluster_rows.append(row)
-                
-                if cluster_rows:
-                    df_cluster = pd.DataFrame(cluster_rows)
-                    dataframes['grpc_streams'] = df_cluster
-
         except Exception as e:
-            logger.error(f"Failed to create network I/O DataFrames: {e}")
+            logger.error(f"Failed to create DataFrames: {e}")
         
         return dataframes
-
-    def _format_network_value(self, value: Optional[Union[float, int]], unit: str) -> str:
-        """Format network values with appropriate units"""
-        if value is None:
-            return "N/A"
-        
-        try:
-            if unit == 'bytes_per_second':
-                return self.format_bytes_per_second(float(value))
-            elif unit == 'bits_per_second':
-                return self.format_bits_per_second(float(value))
-            elif unit == 'packets_per_second':
-                return self.format_packets_per_second(float(value))
-            elif unit == 'seconds':
-                return self.format_network_latency_seconds(float(value))
-            elif unit == 'count':
-                return self.format_count_value(float(value))
-            else:
-                return f"{value:.2f}"
-        except (ValueError, TypeError):
-            return str(value)
-
+    
     def generate_html_tables(self, dataframes: Dict[str, pd.DataFrame]) -> Dict[str, str]:
-        """Generate HTML tables for network I/O data with custom naming"""
+        """Generate HTML tables from DataFrames"""
         html_tables = {}
         
-        table_name_mapping = {
-            'metrics_overview': 'Network Metrics Overview',
-            'container_metrics': 'Container Network Usage',
-            'node_performance': 'Node Network Usage', 
-            'grpc_streams': 'gRPC Active Stream'
-        }
-        
-        for table_name, df in dataframes.items():
-            if not df.empty:
-                display_name = table_name_mapping.get(table_name, table_name.replace('_', ' ').title())
-                
-                # Apply column limits for better readability
-                limited_df = self.limit_dataframe_columns(df, max_cols=6, table_name=table_name)
-                
-                html_tables[table_name] = self.create_html_table(limited_df, display_name)
+        try:
+            # Network overview table
+            if 'network_overview' in dataframes:
+                df = dataframes['network_overview'].copy()
+                if not df.empty:
+                    df_display = df[['metric_name', 'category', 'avg_formatted', 'max_formatted', 'unit']].copy()
+                    df_display.columns = ['Metric', 'Category', 'Avg Usage', 'Max Usage', 'Unit']
+                    html_tables['network_overview'] = self.create_html_table(df_display, 'network_overview')
+            
+            # Metrics overview table (legacy compatibility)
+            if 'metrics_overview' in dataframes:
+                df = dataframes['metrics_overview'].copy()
+                if not df.empty:
+                    # Select and rename columns
+                    columns_map = {
+                        'category': 'Category',
+                        'total_metrics': 'Metrics',
+                        'total_pods': 'Pods',
+                        'total_nodes': 'Nodes', 
+                        'avg_throughput_mbps': 'Avg Throughput (Mbps)',
+                        'avg_utilization_mbps': 'Avg Utilization (Mbps)',
+                        'active_streams': 'Active Streams',
+                        'stream_health': 'Health',
+                        'status': 'Status'
+                    }
+                    
+                    available_cols = [col for col in columns_map.keys() if col in df.columns]
+                    df_display = df[available_cols].copy()
+                    df_display.columns = [columns_map[col] for col in available_cols]
+                    
+                    html_tables['metrics_overview'] = self.create_html_table(df_display, 'metrics_overview')
+            
+            # Container/Pod metrics table
+            if 'container_metrics' in dataframes:
+                df = dataframes['container_metrics'].copy()
+                if not df.empty:
+                    df_display = df[['metric_name', 'pod_name', 'avg_formatted', 'max_formatted', 'unit']].copy()
+                    df_display.columns = ['Metric', 'Pod', 'Avg Usage', 'Max Usage', 'Unit']
+                    html_tables['container_metrics'] = self.create_html_table(df_display, 'container_metrics')
+            
+            # Node performance table
+            if 'node_performance' in dataframes:
+                df = dataframes['node_performance'].copy()
+                if not df.empty:
+                    df_display = df[['metric_name', 'node_name', 'avg_formatted', 'max_formatted', 'unit']].copy()
+                    df_display.columns = ['Metric', 'Node', 'Avg Usage', 'Max Usage', 'Unit']
+                    html_tables['node_performance'] = self.create_html_table(df_display, 'node_performance')
+            
+            # gRPC streams table
+            if 'grpc_streams' in dataframes:
+                df = dataframes['grpc_streams'].copy()
+                if not df.empty:
+                    df_display = df[['metric_name', 'avg_formatted', 'max_formatted', 'latest_formatted', 'unit']].copy()
+                    df_display.columns = ['Metric', 'Avg', 'Max', 'Current', 'Unit']
+                    html_tables['grpc_streams'] = self.create_html_table(df_display, 'grpc_streams')
+                    
+        except Exception as e:
+            logger.error(f"Failed to generate HTML tables: {e}")
         
         return html_tables
-
+    
     def summarize_network_io(self, structured_data: Dict[str, Any]) -> str:
-        """Generate summary for network I/O data"""
+        """Generate a brief summary of network I/O performance"""
         try:
-            summary_parts = [f"Network I/O Performance Analysis (Duration: {structured_data.get('duration', 'unknown')})"]
-            
-            # Container metrics summary
-            container_metrics = structured_data.get('container_metrics', [])
-            if container_metrics:
-                unique_pods = set(m['pod_name'] for m in container_metrics)
-                etcd_pods = [pod for pod in unique_pods if 'etcd' in pod.lower()]
-                summary_parts.append(f"• Container network usage: {len(etcd_pods)} etcd pods monitored")
-                
-                # Find highest throughput for RX
-                rx_metrics = [m for m in container_metrics if 'network_rx' in m.get('metric_name', '')]
-                if rx_metrics:
-                    max_rx = max(rx_metrics, key=lambda x: x.get('avg_value', 0) or 0)
-                    formatted_rx = self._format_network_value(max_rx['avg_value'], max_rx['unit'])
-                    pod_short = max_rx['pod_name'].split('.')[0].replace('etcd-', '')
-                    summary_parts.append(f"• Highest RX throughput: {formatted_rx} ({pod_short})")
-                
-                # Find highest throughput for TX  
-                tx_metrics = [m for m in container_metrics if 'network_tx' in m.get('metric_name', '')]
-                if tx_metrics:
-                    max_tx = max(tx_metrics, key=lambda x: x.get('avg_value', 0) or 0)
-                    formatted_tx = self._format_network_value(max_tx['avg_value'], max_tx['unit'])
-                    pod_short = max_tx['pod_name'].split('.')[0].replace('etcd-', '')
-                    summary_parts.append(f"• Highest TX throughput: {formatted_tx} ({pod_short})")
-
-            # Node metrics summary
+            pod_metrics = structured_data.get('pod_metrics', [])
             node_metrics = structured_data.get('node_metrics', [])
-            if node_metrics:
-                unique_nodes = set(m['node_name'] for m in node_metrics)
-                summary_parts.append(f"• Node network usage: {len(unique_nodes)} nodes monitored")
-                
-                # Find highest node utilization
-                node_rx_metrics = [m for m in node_metrics if 'rx_utilization' in m.get('metric_name', '')]
-                if node_rx_metrics:
-                    max_node_rx = max(node_rx_metrics, key=lambda x: x.get('avg_value', 0) or 0)
-                    formatted_node_rx = self._format_network_value(max_node_rx['avg_value'], max_node_rx['unit'])
-                    node_short = max_node_rx['node_name'].split('.')[0]
-                    summary_parts.append(f"• Highest node RX utilization: {formatted_node_rx} ({node_short})")
-
-            # Cluster metrics summary
             cluster_metrics = structured_data.get('cluster_metrics', [])
-            if cluster_metrics:
-                watch_streams = next((m for m in cluster_metrics if 'watch_streams' in m.get('metric_name', '')), None)
-                if watch_streams and watch_streams.get('latest_value') is not None:
-                    formatted_streams = self._format_network_value(watch_streams['latest_value'], watch_streams['unit'])
-                    summary_parts.append(f"• Active watch streams: {formatted_streams}")
-                
-                lease_streams = next((m for m in cluster_metrics if 'lease_streams' in m.get('metric_name', '')), None)
-                if lease_streams and lease_streams.get('latest_value') is not None:
-                    formatted_lease = self._format_network_value(lease_streams['latest_value'], lease_streams['unit'])
-                    summary_parts.append(f"• Active lease streams: {formatted_lease}")
-
-            # Status assessment
-            collection_time = structured_data.get('collection_time', 'unknown')
-            if collection_time != 'unknown':
-                summary_parts.append(f"• Collection completed at: {collection_time[:19].replace('T', ' ')}")
             
-            summary_parts.append("• Status: All network metrics collected successfully")
-
+            summary_parts = ["Network I/O Performance Analysis:"]
+            
+            if pod_metrics:
+                total_pods = len(set(item['pod_name'] for item in pod_metrics))
+                avg_throughput = self._calculate_pod_throughput_avg(pod_metrics)
+                summary_parts.append(f"• {total_pods} etcd pods monitored with avg throughput {avg_throughput:.1f} Mbps")
+                
+                # Check for high latency
+                latency_metrics = [item for item in pod_metrics if 'latency' in item['metric_name']]
+                if latency_metrics:
+                    high_latency = [item for item in latency_metrics if item['avg_value'] > 0.01]
+                    if high_latency:
+                        summary_parts.append(f"⚠️ {len(high_latency)} pods with high peer latency (>10ms)")
+            
+            if node_metrics:
+                total_nodes = len(set(item['node_name'] for item in node_metrics))
+                avg_utilization = self._calculate_node_utilization_avg(node_metrics)
+                summary_parts.append(f"• {total_nodes} master nodes with avg network utilization {avg_utilization:.1f} Mbps")
+            
+            if cluster_metrics:
+                active_streams = self._get_active_streams_count(cluster_metrics)
+                stream_health = self._assess_stream_health(cluster_metrics)
+                summary_parts.append(f"• {active_streams} active gRPC streams ({stream_health} load)")
+            
+            # Overall health assessment
+            health_status = self.assess_network_io_health(pod_metrics + node_metrics)
+            if health_status == 'critical':
+                summary_parts.append("⚠️ Network performance issues detected")
+            elif health_status == 'degraded':
+                summary_parts.append("⚠️ Some network metrics elevated")
+            else:
+                summary_parts.append("✓ Network I/O performance appears healthy")
+            
             return " ".join(summary_parts)
-
+            
         except Exception as e:
             logger.error(f"Failed to generate network I/O summary: {e}")
             return f"Network I/O summary generation failed: {str(e)}"
-
-    def format_bits_per_second(self, bits_per_sec: float) -> str:
-        """Format bits per second to readable units"""
-        return self.format_network_bits_per_second(bits_per_sec)
-
-    def format_packets_per_second(self, packets_per_sec: float) -> str:
-        """Format packets per second to readable units"""
-        return self.format_network_packets_per_second(packets_per_sec)
-
-    def highlight_network_io_values(self, value: Union[float, int], metric_type: str, unit: str = "", is_top: bool = False) -> str:
-        """Highlight network I/O values with metric-specific thresholds"""
-        return super().highlight_network_io_values(value, metric_type, unit, is_top)
-
-    def _get_network_io_thresholds(self, metric_type: str) -> Dict[str, float]:
-        """Get thresholds for network I/O metrics"""
-        thresholds_map = {
-            'rx': {'warning': 100000000, 'critical': 500000000},  # 100MB/s, 500MB/s
-            'tx': {'warning': 100000000, 'critical': 500000000},  # 100MB/s, 500MB/s
-            'round_trip_time': {'warning': 0.01, 'critical': 0.05},  # 10ms, 50ms
-            'packets': {'warning': 1000, 'critical': 5000},  # 1K pps, 5K pps
-            'watch_streams': {'warning': 500, 'critical': 1000}  # 500, 1000 streams
-        }
-        
-        metric_lower = metric_type.lower()
-        for key, threshold in thresholds_map.items():
-            if key in metric_lower:
-                return threshold
-        
-        return {}

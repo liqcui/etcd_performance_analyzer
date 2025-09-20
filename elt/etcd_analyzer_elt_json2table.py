@@ -22,7 +22,7 @@ from .etcd_analyzer_elt_wal_fsync import diskWalFsyncELT
 from .etcd_analyzer_elt_backend_commit import backendCommitELT
 from .etcd_analyzer_elt_compact_defrag import compactDefragELT
 from .etcd_analyzer_elt_network_io import networkIOELT
-
+ 
 logger = logging.getLogger(__name__)
 
 class PerformanceDataELT(utilityELT):
@@ -38,7 +38,7 @@ class PerformanceDataELT(utilityELT):
         self.backend_commit_elt = backendCommitELT()
         self.compact_defrag_elt = compactDefragELT()
         self.general_info_elt = generalInfoELT()
-        self.network_io_elt = networkIOELT() 
+        self.network_io_elt = networkIOELT()
 
     def extract_json_data(self, results: Union[Dict[str, Any], str]) -> Dict[str, Any]:
         """Extract relevant data from tool results"""
@@ -90,7 +90,7 @@ class PerformanceDataELT(utilityELT):
                 extracted['structured_data'] = self.backend_commit_elt.extract_backend_commit(actual_data)
             elif data_type == 'compact_defrag':
                 extracted['structured_data'] = self.compact_defrag_elt.extract_compact_defrag(results)
-            elif data_type == 'network_io':  # Add this line
+            elif data_type == 'network_io':  # Add this block
                 extracted['structured_data'] = self.network_io_elt.extract_network_io(results)                         
             else:
                 extracted['structured_data'] = self._extract_generic_data(results)
@@ -100,6 +100,7 @@ class PerformanceDataELT(utilityELT):
         except Exception as e:
             logger.error(f"Failed to extract JSON data: {e}")
             return {'error': str(e), 'raw_data': results}
+
 
     def _identify_data_type(self, data: Dict[str, Any]) -> str:
         """Identify the type of data from tool results"""
@@ -357,7 +358,7 @@ class PerformanceDataELT(utilityELT):
             elif data_type == 'compact_defrag':
                 return self.compact_defrag_elt.summarize_compact_defrag(structured_data)
             elif data_type == 'network_io':  # Add this line
-                return self.network_io_elt.summarize_network_io(structured_data)                               
+                return self.network_io_elt.summarize_network_io(structured_data)                                                   
             else:
                 return self._summarize_generic(structured_data)
         
@@ -382,7 +383,9 @@ class PerformanceDataELT(utilityELT):
             elif data_type == 'general_info':
                 return self.general_info_elt.transform_to_dataframes(structured_data)
             elif data_type == 'compact_defrag':
-                return self.compact_defrag_elt.transform_to_dataframes(structured_data)                
+                return self.compact_defrag_elt.transform_to_dataframes(structured_data) 
+            elif data_type == 'network_io':  # Add this line
+                return self.network_io_elt.transform_to_dataframes(structured_data)                               
             else:
                 # Default transformation for other data types
                 dataframes = {}
@@ -459,7 +462,7 @@ class PerformanceDataELT(utilityELT):
             elif data_type == 'compact_defrag':
                 return self.compact_defrag_elt.generate_html_tables(dataframes)
             elif data_type == 'network_io':  # Add this line
-                return self.network_io_elt.generate_html_tables(dataframes)                
+                return self.network_io_elt.generate_html_tables(dataframes)                                
             else:
                 # Default HTML table generation
                 html_tables = {}
@@ -1063,7 +1066,7 @@ def process_compact_defrag_json(compact_defrag_data: Union[Dict[str, Any], str])
             'error': str(e),
             'processing_successful': False
         }
-# Add convenience function for network I/O processing:
+ 
 def process_network_io_json(network_io_data: Union[Dict[str, Any], str]) -> Dict[str, Any]:
     """Process network I/O JSON data specifically"""
     try:
@@ -1103,7 +1106,7 @@ def process_network_io_json(network_io_data: Union[Dict[str, Any], str]) -> Dict
             'error': str(e),
             'processing_successful': False
         }
-# Updated __all__ export list
+#  Updated __all__ export list
 __all__ = [
     'PerformanceDataELT',
     'extract_and_transform_results',

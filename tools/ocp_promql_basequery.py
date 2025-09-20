@@ -486,10 +486,28 @@ class PrometheusBaseQuery:
                     'targets_up': targets_up
                 }
             else:
+                # Handle auth errors gracefully with guidance
+                resp_code = result.get('response_status')
+                if resp_code in (401, 403):
+                    msg = "Authentication failed" if resp_code == 401 else "Authorization failed"
+                    hint = (
+                        "Ensure your token has permissions to query Prometheus. For OpenShift, grant 'cluster-monitoring-view' "
+                        "or appropriate RBAC to your user/service account, or supply a valid token via kubeconfig."
+                    )
+                    self.logger.warning(f"{msg} - insufficient permissions")
+                    return {
+                        'status': 'auth_failed',
+                        'error': result.get('error', msg),
+                        'code': resp_code,
+                        'hint': hint,
+                        'prometheus_url': self.base_url
+                    }
                 self.logger.error(f"Prometheus connection test failed: {result.get('error')}")
                 return {
                     'status': 'connection_failed',
-                    'error': result.get('error', 'Unknown error')
+                    'error': result.get('error', 'Unknown error'),
+                    'response_status': resp_code,
+                    'prometheus_url': self.base_url
                 }
         except Exception as e:
             self.logger.error(f"Error testing Prometheus connection: {e}")

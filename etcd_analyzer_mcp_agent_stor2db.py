@@ -285,13 +285,15 @@ class ETCDAnalyzerStorDBMCPAgent:
                     ]
                 }
             else:
+                # Surface auth guidance if available
+                hint = wal_fsync_data.get('hint')
                 error_msg = f"Failed to collect WAL fsync metrics: {wal_fsync_data.get('error')}"
                 logger.warning(error_msg)
                 # Don't treat as fatal error, continue without WAL fsync data
                 return {
                     **state,
                     "wal_fsync_data": None,
-                    "messages": state["messages"] + [AIMessage(content=error_msg)]
+                    "messages": state["messages"] + [AIMessage(content=error_msg + (f" Hint: {hint}" if hint else ""))]
                 }
                 
         except Exception as e:

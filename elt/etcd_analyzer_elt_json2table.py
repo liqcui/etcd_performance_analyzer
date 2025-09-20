@@ -60,10 +60,10 @@ class PerformanceDataELT(utilityELT):
             # For cluster_info and etcd_cluster_status, extract the actual data from nested structure
             actual_data = results
             if data_type in ['cluster_info', 'etcd_cluster_status', 'disk_io']:
-                if 'data' in results and isinstance(results['data'], dict):
+                if 'data' in results and isinstance(results.get('data'), dict):
                     # Extract the nested data for processing
                     actual_data = results['data']
-                elif 'result' in results and 'data' in results['result']:
+                elif 'result' in results and isinstance(results.get('result'), dict) and 'data' in results['result']:
                     actual_data = results['result']['data']
 
             extracted = {
@@ -108,7 +108,7 @@ class PerformanceDataELT(utilityELT):
             return 'network_io'
         
         # Check for network I/O data structure
-        if 'data' in data and 'metrics' in data['data']:
+        if 'data' in data and isinstance(data.get('data'), dict) and 'metrics' in data['data']:
             metrics_data = data['data']['metrics']
             # Check if it contains network I/O specific metrics
             network_io_metrics = ['container_network_rx', 'container_network_tx', 'network_peer_round_trip_time_p99',
@@ -135,7 +135,7 @@ class PerformanceDataELT(utilityELT):
             return 'compact_defrag'
         
         # Check for compact defrag data structure
-        if 'data' in data and 'metrics' in data['data']:
+        if 'data' in data and isinstance(data.get('data'), dict) and 'metrics' in data['data']:
             metrics_data = data['data']['metrics']
             # Check if it contains compact defrag specific metrics
             compact_defrag_metrics = ['debugging_mvcc_db_compaction_duration_sum_delta', 'debugging_mvcc_db_compaction_duration_sum',
@@ -161,7 +161,7 @@ class PerformanceDataELT(utilityELT):
             return 'backend_commit'
 
         # Check for backend commit data structure
-        if 'data' in data and 'metrics' in data['data']:
+        if 'data' in data and isinstance(data.get('data'), dict) and 'metrics' in data['data']:
             metrics_data = data['data']['metrics']
             # Check if it contains backend commit specific metrics
             backend_commit_metrics = ['disk_backend_commit_duration_seconds_p99', 'backend_commit_duration_sum_rate', 
@@ -186,7 +186,7 @@ class PerformanceDataELT(utilityELT):
             return 'wal_fsync'
         
         # Check for WAL fsync data structure
-        if 'data' in data and 'metrics' in data['data']:
+        if 'data' in data and isinstance(data.get('data'), dict) and 'metrics' in data['data']:
             metrics_data = data['data']['metrics']
             # Check if it contains WAL fsync specific metrics
             wal_fsync_metrics = ['disk_wal_fsync_seconds_duration_p99', 'wal_fsync_duration_seconds_sum_rate', 
@@ -264,14 +264,14 @@ class PerformanceDataELT(utilityELT):
             return 'cluster_info'
         
         # Check nested structure for cluster info
-        if 'result' in data and 'data' in data['result']:
+        if 'result' in data and isinstance(data.get('result'), dict) and 'data' in data['result']:
             nested_data = data['result']['data']
             if ('cluster_name' in nested_data and 'cluster_version' in nested_data and 
                 'master_nodes' in nested_data):
                 return 'cluster_info'
         
         # Check for data nested structure (common pattern) for cluster info
-        if 'data' in data:
+        if 'data' in data and isinstance(data.get('data'), dict):
             nested_data = data['data']
             if ('cluster_name' in nested_data and 'cluster_version' in nested_data and 
                 ('master_nodes' in nested_data or 'total_nodes' in nested_data)):
